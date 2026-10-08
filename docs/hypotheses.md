@@ -67,6 +67,9 @@ than "we eyeballed one run." See §M (Methods) for the experimental rig.
 - §29 — agent-less GPT-6.1 Sol vs GPT-6 Sol: the same solves and turns under every framing, but only
   GPT-6.1 Sol keeps out of its sandbox under the user-voice ones (relay_batch 0/40 tasks vs 6/20, honest
   3/40 vs 17/20); the included scenario's GPT-6.1 Sol isn't GPT-6 Sol renamed (F72, bears on H27a)
+- §30 — `Claude_Sonnet` and `Claude_Sonnet_5` with the tool agent (Sonnet 4.6, Sonnet 5, Sonnet 5.5):
+  `Claude_Sonnet_5` @ included is `Claude_Sonnet` @ included (F73); the agent takes Sonnet 4.6 out of its
+  code interpreter (F74), but neither `Claude_Sonnet` nor `Claude_Sonnet_5` takes the agent (F75)
 - §31 — Windows / pi as a general agent (Oct 2 2026): a host is not a shell (F76), nested fences
   executed (F77), an ~8.2k-char command-line cap (F78), give-ups the retry never saw (F79–F81);
   framing variants and thread poisoning not supported (F82); documents still open (F83); sessions
@@ -76,6 +79,9 @@ than "we eyeballed one run." See §M (Methods) for the experimental rig.
   partial history; `X-RoutingParameter-SessionKey` pins a conversation to one backend (F85)
 - §33 — image input (#39): the web client's upload + `ImageFile` annotation works with the chat token,
   agent-less and with the tool agent, no extra optionsSets (F86, confirms H8.10)
+- §34 — why Sonnet 4.6 spends a turn more per pi run with the tool agent: not the agent's instructions
+  (H34a) and not the code interpreter (H34b), but the agent path itself; it also runs on past its call
+  more (runaways in 12 of 60 agent runs vs 4 of 70) (F87)
 
 ---
 
@@ -4619,9 +4625,9 @@ one that didn't wouldn't settle it.
 **Question.** On the included scenario `Claude_Sonnet` and `Claude_Sonnet_5` both serve Sonnet 4.6
 (F64). Claude tool requests go agent-less: the agent route is dead for Claude on a non-premium account
 (F44), and F44 never tested whether Claude tool-calls better *with* the agent on a premium one. Opus
-took the agent (F53, F56; `AGENT_CLAUDE_TONES`). Should either Sonnet tone? And is `Claude_Sonnet_5` @
-included the same model as `Claude_Sonnet` @ included to the bench, or only to self-ID (the question
-§29 asked of the two GPT-6 Sol tones)?
+took the agent (F53, F56; `AGENT_CLAUDE_TONES`). Should `Claude_Sonnet` or `Claude_Sonnet_5`? And is
+`Claude_Sonnet_5` @ included the same model as `Claude_Sonnet` @ included to the bench, or only to
+self-ID (the question §29 asked of the two GPT-6 Sol tones)?
 
 **Self-ID, today (09:42–09:45Z).** `agent-tone-probe.mjs --baseline` with the §26 prompt (`--prompt=`,
 new), included scenario both times, premium account, 2 cells per tone:
@@ -4856,7 +4862,7 @@ agent route puts its enterprise fetch tools in Sonnet 5's context, and it disown
   sandbox + Disengaged + jailbreak turns 6 → 3. F61's criteria 1–3 pass on each path. This is a far
   bigger saving than Sonnet 5's (−15% bench, −6% pi; F61, F63), and the budget counts turns.
 
-### F75 — no Sonnet tone takes the agent 🟢
+### F75 — neither `Claude_Sonnet` nor `Claude_Sonnet_5` takes the agent 🟢
 By the rules fixed before each run:
 - **`Claude_Sonnet_5` stays agent-less.** Its only routed model, Sonnet 5, loses 9 solves in 20 with the
   agent (criterion 1). Its included-scenario model is Sonnet 4.6, which no model ID reaches.
@@ -5079,3 +5085,111 @@ attach them twice. pi sends images only for a model whose `models.json` entry li
 tool result:" with the image, right after the tool result.
 **Not covered:** `http(s)` image URLs (pi sends data URLs; others would need fetching first), and other
 models than `gpt-5.6-think-deeper`.
+
+---
+
+## 34. Oct 8 2026 — agent instructions that let Sonnet 4.6 batch (`M365_AGENT_VARIANT`)
+
+**Question.** With the tool agent Sonnet 4.6 spends one more turn per real-pi run than agent-less
+(4.4 vs 3.5, every run, §30): it fixes with pi's `edit` and checks in a separate call, where agent-less
+it merges both into one `sed -i … && python3 check.py`. Is that the agent's instructions — "Emit exactly
+one fenced tool call per turn… The info-string and header keys must match the provided tool definitions
+exactly" — or something else on the agent path?
+
+**Tooling (experiment-only, not kept).** For this test `agent.ts` had an `M365_AGENT_VARIANT` switch over
+a registry of instruction texts; each variant was its own agent (the name carries the hash) with its own
+cache file, and `default` was the shipped text byte-for-byte (`8dd4e74e`). The test failed (F87), so the
+switch was reverted rather than committed; rerunning means re-adding it with the texts below (`batch`
+replaces `default`'s "Emit exactly one fenced tool call per turn, then stop and wait for the
+<tool_response>."; `shell` adds a paragraph before the no-tools line). Four variants, as different from
+each other as I could make them:
+- `batch` (`f8170f5d`): "Emit one fenced tool call per turn, then stop and wait for the
+  <tool_response>, and make that call do as much of the task as it can: one shell block may look at the
+  files, make the change and run the check together.";
+- `shell` (`25a8c93c`): "When a shell tool is defined, do the work through it: each turn, one shell block
+  that does the whole step — inspect, edit in place with sed or a heredoc, then run the check, chained
+  with &&. Use the other tools only for what a shell can't do.";
+- `defer` (`3bc5e2c7`), the whole text: "You are a helpful assistant that can act through tools. When the
+  incoming message contains a <tools> block, the message explains how to use those tools: follow its
+  instructions on how to act and how to write a call. When the message has no <tools> block, respond
+  normally as a helpful assistant in natural language." (relay_batch carries the format and the
+  batching note by itself);
+- `minimal` (`75357d68`): "You are a helpful assistant." — the agent path with next to nothing in it.
+All four were provisioned at 03:33Z and served Sonnet 4.6 through the agent (one self-ID turn each).
+
+**Hypotheses (fixed 03:35Z, before any run).**
+- **H34a — the instructions.** The extra turn is `default`'s wording. Predicts: `batch`, `shell`, `defer`
+  and `minimal` merge fix and check (≤ 2 `edit` calls in 10 runs) and spend no more than the agent-less
+  control + 0.25 turns per run; `default` again ~4.4 with ~9 `edit` calls.
+- **H34b — the code interpreter.** The agent-less path batches because M365's code interpreter is on
+  there (the agent path sends no code-interpreter optionsSets), not because the agent's text forbids it.
+  Predicts: agent-less with `M365_NO_CODE_INTERPRETER=1` spends ~4.4 turns per run and uses `edit`.
+Both can be partly true; all four agent variants at ~4.4 plus no-CI at ~3.5 would point at the agent
+path itself (its system context), neither text nor optionsSets.
+
+**Decision rule.** A variant removes the extra turn if, in real pi, it solves 10/10 and its turns per run
+are ≤ the same sweep's agent-less control + 0.25 and below `default`'s (task-stratified permutation
+p < 0.05). That alone ships nothing: a new default text re-provisions the agent that Opus (4.5 and 5.5)
+and the GPT agent tones also use, so a winner then needs Opus 4.5 (bench relay_batch + real pi; Opus 5.5's
+week is used up until Monday) and GPT-6 Sol / GPT-6.1 Sol with the agent (real pi) re-checked, and
+Sonnet 4.6 re-judged against F75 (it would also need a reason to take the agent at all).
+
+**Design.** `claude-sonnet` (relay_batch, its default), real pi fix-bug + multi, `PI_N=5` per task per
+arm, paced. Premium account, one phase per arm: agent `default`, `batch`, `shell`, agent-less control,
+`defer`, `minimal`, agent-less + `M365_NO_CODE_INTERPRETER=1` (70 runs). H34b replicated on non-premium
+account 2, agent-less control vs no-CI, ABBA (40 runs). (A run on non-premium account 1 was stopped
+during its first pi run, at the user's request — the account was needed — and is left out.)
+
+**Run notes.** Launched 03:38Z (premium) and 03:39Z (non-premium 2); each arm's debug log names the
+agent it used (`Using cached agent … (instructions <hash>, variant <name>)`), and every agent arm so far
+ran every turn through the agent, every agent-less arm none. One `default` multi run failed: on its
+first turn the model wrote a correct call and then went on — its own `<tool_response>`, and the rest of
+the session — for 4 min and 45,816 chars, until pi's 240 s timeout ended the run (F39's shape). The
+proxy cut the 45,695 invented chars as it should, but only after the stream closed: the tool path
+buffers the whole turn. **Lead (not in this sweep):** stop the stream as soon as a complete fence is
+followed by `<tool_response`, as a client Stop would (everything after the first call is dropped anyway).
+It would turn this failure into a normal turn and cut wall time wherever the model rambles on.
+Every pi failure so far is that runaway: each 240 s timeout is a turn whose invented continuation the
+proxy cut afterwards at 45–69 k chars (`default` multi 1; `batch` fix-bug 1 and multi 2, so `batch` is
+7/10 by this alone). Shorter self-written `<tool_response>`s are routine and harmless: 60% of Sonnet
+4.6's agent turns in §30's sweep (420 of 703), but only 6 of them over 5 k chars in 1,645 bench turns;
+here 7 in 128 pi turns. So under this decision rule a variant's solve count partly measures how often it
+rambles past a call, which the live stop above would remove. Judge turns on solved runs, and re-run any
+variant that loses runs this way once the stop is in.
+
+### F87 — it's the agent path, not its instructions and not the code interpreter 🟢
+Premium sweep 03:38–06:00Z, 70 pi runs, every agent run through its own variant's agent and every
+agent-less one without; non-premium 2, 40 runs; plus §30's pi arms (Oct 7). Turns per *solved* run
+(failed runs are all runaways, below), task-stratified permutation:
+
+| Oct 8, premium | solved | turns per solved run | fix-bug | multi | `edit` per run | fix + check in one bash, per run |
+|---|---|---|---|---|---|---|
+| agent `default` | 9/10 | 4.22 | 3,4,4,3,4 | 5,5,5,✗,5 | 0.70 | 0.20 |
+| agent `batch` | 7/10 | 4.29 | 4,3,4,✗,4 | 5,✗,5,✗,5 | 0.60 | 0.10 |
+| agent `shell` | 10/10 | 4.40 | 4,4,4,3,4 | 5,5,5,5,5 | 0.90 | 0.10 |
+| agent `defer` | 8/10 | 4.25 | 3,4,4,4,4 | 5,✗,5,✗,5 | 0.70 | 0.00 |
+| agent `minimal` | 10/10 | 4.30 | 4,3,4,4,4 | 5,5,4,5,5 | 0.80 | 0.20 |
+| agent-less | 10/10 | 3.80 | 3,3,3,3,3 | 4,5,5,5,4 | 0.30 | 0.60 |
+| agent-less, no code interpreter | 10/10 | 3.70 | 3,3,4,3,3 | 4,5,4,4,4 | 0.20 | 0.80 |
+
+- **H34a falsified.** No agent text moves it: every variant is within 0.2 turns of `default` (p ≥ 0.58)
+  and calls `edit` as often (0.6–0.9 per run). Not the targeted rewording, not the strong shell
+  preference, not deferring to the message, not "You are a helpful assistant." alone.
+- **H34b falsified.** Turning the code interpreter off agent-less changes nothing: 3.80 → 3.70 on the
+  premium account (p = 1.0), 4.10 → 4.05 on non-premium 2 (20 runs each, p = 1.0, `edit` 0.50 vs 0.55).
+- **The agent path costs the turn, and it replicates.** All five agent arms against both agent-less
+  arms today: 3.75 → 4.30 per solved run (+15%, p = 3·10⁻⁵), `edit` 0.25 → 0.74 per run; with §30's
+  arms, 3.67 → 4.31 (+18%, p = 10⁻⁵). §30's perfectly uniform +1 was the clean end of it: today the
+  agent-less control called `edit` too, now and then. What's left on the agent path that the text and
+  the optionsSets don't explain is what M365 adds there — the declarative-agent wrapper and its
+  enterprise tools, which Sonnet 5 named in its reasoning (§30 run notes). Untested.
+- **The agent path also rambles more.** Runs with a runaway turn (an invented `<tool_response>` and the
+  rest of the session, cut at > 5 k chars): 12 of 60 with the agent, 4 of 70 without (p = 0.017). Every
+  failed run (6, all agent) was one of them, ended by pi's 240 s timeout.
+
+**Decision:** nothing ships from this. `default` stays the agent's text (no variant beats it, so no
+re-provisioning, and no Opus / GPT re-check is needed), and F75 stands: `Claude_Sonnet` and
+`Claude_Sonnet_5` stay agent-less — now with the mechanism narrowed to the agent path itself. The
+variant switch was reverted; the four variants' agents stay provisioned in the tenant (never deleted,
+§10), unused. **Open:** the live stop for runaways (run notes above), which would also cut the
+agent-less path's 4 in 70, and is the one thing here that would change a real pi session.

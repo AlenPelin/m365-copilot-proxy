@@ -251,8 +251,12 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
 - **Not every tone serves with the tool agent — `toneUsesToolAgent()` decides, per exact tone**
   (`M365_FORCE_AGENT=1`/`0` overrides it either way).
   Claude tones (except `Claude_Opus`, see above) and `Gpt_6_Reasoning` go agent-less even with tools.
-  The Sonnets were benched with the agent on a premium account (§30 F75): it removes their sandbox, but
-  Sonnet 5 then refuses the harness and Sonnet 4.6 spends a turn more per pi run — don't add them. With the agent attached GPT-6 is
+  `Claude_Sonnet` and `Claude_Sonnet_5` were benched with the agent on a premium account (§30 F75): it
+  removes the sandbox of Sonnet 4.6, Sonnet 5 and Sonnet 5.5, but Sonnet 5 (`Claude_Sonnet_5` @ paid)
+  then refuses the harness and Sonnet 4.6 (`Claude_Sonnet` and `Claude_Sonnet_5` @ included) spends a
+  turn more per pi run — don't add them.
+  That extra turn is the agent path's own: four other agent instruction texts didn't move it (§34 F87).
+  With the agent attached GPT-6 is
   a dead route on every account (`result: InternalError`; the proxy used to 502 on it, #41), and
   Claude is dead on non-premium accounts. Add a tone to `AGENTLESS_TOOL_TONES` only after
   `scripts/agent-tone-probe.mjs` says so. Agent-less also means M365's code interpreter is on, and under `baseline` GPT-6
