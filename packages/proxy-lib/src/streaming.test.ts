@@ -22,7 +22,13 @@ const scripted: {
   newConversations: number;
   /** Held open to keep a turn silent while a test advances the clock (heartbeat tests). */
   gate: Promise<void> | null;
-} = { deltas: [], runs: 0, texts: [], queue: [], agentFlags: [], newConversations: 0, models: [], images: [], gate: null };
+  /** The abort signal of every run() call, in order. */
+  signals: Array<AbortSignal | undefined>;
+  /** Deltas yielded by the last run() before its signal aborted it (the Stop), or null if it ran out. */
+  stoppedAfter: number | null;
+  /** Make `fullText` grow with the deltas yielded so far, like the real stream's composed answer. */
+  liveFullText?: boolean;
+} = { deltas: [], runs: 0, texts: [], queue: [], agentFlags: [], newConversations: 0, models: [], images: [], gate: null, signals: [], stoppedAfter: null };
 
 vi.mock("@m365-copilot/core", async (importActual) => {
   const actual = await importActual<typeof import("@m365-copilot/core")>();
@@ -32,10 +38,12 @@ vi.mock("@m365-copilot/core", async (importActual) => {
     reset() {}
     newConversation() { this.conversationId = "conv-test-2"; this.turnCount = 0; scripted.newConversations++; }
     async refreshAgent() { return false; }
-    async run(text: string, model?: string, _signal?: AbortSignal, useAgent?: boolean, images: string[] = []) {
+    async run(text: string, model?: string, signal?: AbortSignal, useAgent?: boolean, images: string[] = []) {
       if (scripted.gate) await scripted.gate;
       scripted.models.push(model ?? "");
       scripted.images.push(images);
+      scripted.signals.push(signal);
+      scripted.stoppedAfter = null;
       this.turnCount++; // like the real session: later requests go down the delta path
       scripted.runs++;
       scripted.texts.push(text);
@@ -43,8 +51,9 @@ vi.mock("@m365-copilot/core", async (importActual) => {
       const next = scripted.queue.shift();
       const deltas = next ? (next.fullText ? [next.fullText] : []) : scripted.deltas;
       const full = next ? next.fullText : (scripted.fullText ?? deltas.join(""));
+      const yielded: string[] = [];
       const stream = {
-        fullText: full,
+        get fullText() { return scripted.liveFullText ? yielded.join("") : full; },
         hasContent: full.length > 0,
         result: next?.result ?? scripted.result ?? { value: "Success" },
         metering: next?.metering ?? null,
@@ -59,6 +68,9 @@ vi.mock("@m365-copilot/core", async (importActual) => {
         async *[Symbol.asyncIterator]() {
           for (const d of deltas) {
             await Promise.resolve(); // yield to the event loop between deltas
+            // Like the real session: an aborted signal sends Stop and the turn ends.
+            if (signal?.aborted) { scripted.stoppedAfter = yielded.length; return; }
+            yielded.push(d);
             yield d;
           }
         },
@@ -924,5 +936,93 @@ describe("image input (#39)", () => {
     await handleChatCompletion(body, new SessionPool());
     expect(scripted.images).toEqual([[PNG]]);
     scripted.queue = [];
+  });
+});
+
+describe("stopping a turn that writes its own <tool_response> (early stop)", () => {
+  const tools = [{ type: "function", function: { name: "bash", parameters: { type: "object", properties: { command: { type: "string" } } } } }];
+  // A call, then the model's own result and the rest of an invented session:
+  // a short tail (~500 chars, the usual kind) and a runaway (~3,700).
+  const head = ["```bash\nls\n```\n\n", "<tool_res", "ponse>\nconfig.json\n</tool_response>\n\n"];
+  const steps = (n: number) => Array.from({ length: n }, (_, i) => `invented step ${i}\n`);
+  const short = [...head, ...steps(30)];
+  const runaway = [...head, ...steps(200)];
+  const tagAt = head[0].length;
+
+  /** How many deltas have streamed once the tail is `after` chars past the tag. */
+  function deltasUntil(deltas: string[], after: number): number {
+    let n = 0, len = 0;
+    while (len - tagAt < after) len += deltas[n++].length;
+    return n;
+  }
+
+  async function toolTurn(deltas: string[], withTools = true, env: Record<string, string> = {}): Promise<any> {
+    scripted.result = null;
+    scripted.queue = [];
+    scripted.deltas = deltas;
+    scripted.fullText = undefined;
+    scripted.liveFullText = true;
+    Object.assign(process.env, env);
+    try {
+      const res = await respond(ChatCompletionRequest.parse({
+        model: "claude-sonnet", stream: false, messages: [{ role: "user", content: `stop ${Math.random()}` }],
+        ...(withTools ? { tools } : {}),
+      }));
+      return (await res.json()).choices[0].message;
+    } finally {
+      for (const k of Object.keys(env)) delete process.env[k];
+      scripted.liveFullText = false;
+      scripted.deltas = [];
+    }
+  }
+
+  it("lets a short invented tail run to its end, then cuts it and runs the call", async () => {
+    const msg = await toolTurn(short);
+    expect(scripted.signals.at(-1)?.aborted).toBe(false);
+    expect(scripted.stoppedAfter).toBeNull();
+    expect(msg.tool_calls).toHaveLength(1);
+    expect(JSON.parse(msg.tool_calls[0].function.arguments).command).toBe("ls");
+    expect(msg.content ?? "").not.toContain("invented step");
+  });
+
+  it("stops a runaway once its tail is 2,000 chars past the tag, and runs the call", async () => {
+    const msg = await toolTurn(runaway);
+    const n = deltasUntil(runaway, 2000);
+    expect(n).toBeLessThan(runaway.length);
+    expect(scripted.signals.at(-1)?.aborted).toBe(true);
+    expect(scripted.stoppedAfter).toBe(n);
+    expect(JSON.parse(msg.tool_calls[0].function.arguments).command).toBe("ls");
+  });
+
+  it("stops at the tag itself under M365_EARLY_STOP_AFTER=0, even split across deltas", async () => {
+    const msg = await toolTurn(short, true, { M365_EARLY_STOP_AFTER: "0" });
+    expect(scripted.signals.at(-1)?.aborted).toBe(true);
+    expect(scripted.stoppedAfter).toBe(3); // the tag completes in the third delta
+    expect(JSON.parse(msg.tool_calls[0].function.arguments).command).toBe("ls");
+  });
+
+  it("honours another M365_EARLY_STOP_AFTER", async () => {
+    await toolTurn(short, true, { M365_EARLY_STOP_AFTER: "100" });
+    expect(scripted.stoppedAfter).toBe(deltasUntil(short, 100));
+  });
+
+  it("doesn't stop for a tag that follows prose rather than a call", async () => {
+    const msg = await toolTurn(["I can't run tools here. A result would look like ", "<tool_response>…</tool_response>", " and so on."], true, { M365_EARLY_STOP_AFTER: "0" });
+    expect(scripted.signals.at(-1)?.aborted ?? false).toBe(false);
+    expect(scripted.stoppedAfter).toBeNull();
+    expect(msg.tool_calls ?? []).toHaveLength(0);
+  });
+
+  it("leaves a request without tools alone", async () => {
+    await toolTurn(runaway, false);
+    expect(scripted.signals.at(-1)).toBeUndefined();
+    expect(scripted.stoppedAfter).toBeNull();
+  });
+
+  it("waits for the turn to end under M365_NO_EARLY_STOP=1, and still cuts the invented tail", async () => {
+    const msg = await toolTurn(runaway, true, { M365_NO_EARLY_STOP: "1" });
+    expect(scripted.signals.at(-1)?.aborted ?? false).toBe(false);
+    expect(scripted.stoppedAfter).toBeNull();
+    expect(JSON.parse(msg.tool_calls[0].function.arguments).command).toBe("ls");
   });
 });

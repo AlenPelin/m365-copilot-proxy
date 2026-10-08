@@ -32,6 +32,7 @@ import {
   looksLikeHallucinatedCompletion,
   looksLikeRemoteArtifactCompletion,
   truncateAtFabricatedToolResponse,
+  fabricatedToolResponseAt,
   textAfterFirstToolCall,
   longHeredocAsWrite,
   formatToolResponse,
@@ -116,6 +117,17 @@ function outputFinishReason(text: string): "stop" | "length" {
     return "length";
   }
   return "stop";
+}
+
+/** How many chars of a model-written <tool_response> tail a tool turn may run
+ *  before the proxy stops it (runBuffered). 0 stops at the tag itself. With the
+ *  default, pi takes as many turns as when the turn runs to its end (+2%,
+ *  p = 0.74), and no runaway gets far; stopping at the tag cost 10% more turns
+ *  (hypotheses §35 F89). */
+const DEFAULT_EARLY_STOP_AFTER = 2_000;
+function earlyStopAfter(): number {
+  const v = Number(process.env.M365_EARLY_STOP_AFTER);
+  return process.env.M365_EARLY_STOP_AFTER !== undefined && Number.isFinite(v) && v >= 0 ? v : DEFAULT_EARLY_STOP_AFTER;
 }
 
 type ChatBody = z.infer<typeof ChatCompletionRequest>;
@@ -444,22 +456,51 @@ export async function handleChatCompletion(
     // detection profile. A single long pi thread never trips the trigger.
     await awaitDegradationBackoff();
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      // A <tool_response> the model writes after a real call is a stop sequence
+      // (truncateAtFabricatedToolResponse), but the cut in produce() only runs
+      // once M365 has finished the turn, and Sonnet 4.6 sometimes writes the rest
+      // of the session after its call: minutes of invented output (45-69k chars),
+      // long enough for pi's request timeout to fail the run (hypotheses §34). So
+      // stop the turn once the invented tail runs past M365_EARLY_STOP_AFTER
+      // chars (2,000 by default), the way a client's Stop does; the cut then keeps the head as
+      // before. Not at the tag itself: M365 keeps the whole message in the
+      // conversation, the model seems to follow a short tail as its plan, and
+      // stopping at the tag cost Sonnet 4.6 (`claude-sonnet`, agent-less) 10%
+      // more turns (§35 F89).
+      // M365_NO_EARLY_STOP=1 waits for the turn to end instead.
+      const earlyStop = hasTools && !process.env.M365_NO_EARLY_STOP ? new AbortController() : null;
+      const stopAfter = earlyStopAfter();
+      const signal = !earlyStop ? opts.signal
+        : opts.signal ? AbortSignal.any([opts.signal, earlyStop.signal]) : earlyStop.signal;
       let copilotStream;
       try {
         // Only attach the tool-calling agent when the request actually has tools.
         // The agent overrides `tone` (forces GPT-5), so tool-less requests must
         // skip it to reach the model the tone selects (e.g. Claude). See
         // ModelSession.run / docs H8.6.
-        copilotStream = await session.run(text, model, opts.signal, useToolAgent, inputImages);
+        copilotStream = await session.run(text, model, signal, useToolAgent, inputImages);
       } catch (err: any) {
         return { error: jsonResponse(502, { error: { message: err.message, type: "upstream_error" } }) };
       }
 
       let fullText = "";
+      let tagAt = -1; // where the invented <tool_response> starts, once seen
       try {
         for await (const delta of copilotStream) {
           fullText += delta;
           onDelta?.(delta);
+          if (!earlyStop || earlyStop.signal.aborted) continue;
+          // Measured on the stream's composed text, which has the heads that
+          // arrive only as snapshots (#29) — a fence's opening line among them.
+          const sofar = (copilotStream.fullText?.length ?? 0) > fullText.length ? copilotStream.fullText! : fullText;
+          // Look for the tag only when this delta (or its seam with the last one) can hold it.
+          if (tagAt < 0 && /<tool_/i.test(fullText.slice(Math.max(0, fullText.length - delta.length - 16)))) {
+            tagAt = fabricatedToolResponseAt(sofar, body.tools);
+          }
+          if (tagAt >= 0 && sofar.length - tagAt >= stopAfter) {
+            log.info(`Model is writing its own <tool_response> after its call — stopping the turn ${sofar.length} chars in (tag at ${tagAt})`);
+            earlyStop.abort();
+          }
         }
         if (copilotStream.fullText && copilotStream.fullText.length > fullText.length) {
           fullText = copilotStream.fullText;

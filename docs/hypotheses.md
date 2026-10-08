@@ -82,6 +82,11 @@ than "we eyeballed one run." See §M (Methods) for the experimental rig.
 - §34 — why Sonnet 4.6 spends a turn more per pi run with the tool agent: not the agent's instructions
   (H34a) and not the code interpreter (H34b), but the agent path itself; it also runs on past its call
   more (runaways in 12 of 60 agent runs vs 4 of 70) (F87)
+- §35 — stopping a tool turn once the model writes its own `<tool_response>` after a call (#65): at the
+  tag it saves 25–35% of pi's wall time with no lost solves (F88), but costs Sonnet 4.6 10% more turns
+  agent-less; a 2,000-char cap on the invented tail keeps the turns and still ends the runaways, and is
+  the default (F89); between Oct 8 and Oct 11 M365 stopped streaming Claude to the premium account (no
+  change in this repo caused it)
 
 ---
 
@@ -4637,7 +4642,7 @@ new), included scenario both times, premium account, 2 cells per tone:
 | `Claude_Sonnet` | Sonnet 4.6, 2025-08 ×1; **dead route ×1** (BotConnection, `InternalError`, the first cell of the run) | Sonnet 4.6, 2025-08 ×2 |
 | `Claude_Sonnet_5` | Sonnet 4.6, 2025-08 ×2 | Sonnet 4.6, 2025-08 ×2 |
 
-Non-premium account 1, with the agent: the dead route for both tones (2/2, ~3 s), as in F44/F64; agent-less
+A non-premium account, with the agent: the dead route for both tones (2/2, ~3 s), as in F44/F64; agent-less
 (the user's `tone-probe.mjs`, same prompt, 10:01Z): "Claude Sonnet 4.6; Anthropic; 2025-08" for both
 (1/1 each, `DeepLeo`, the invalid-tone control rejected). So all four configurations self-ID as Sonnet
 4.6, and the agent arms below can only run on the premium account. The premium dead-route cell is F52's transient
@@ -4677,8 +4682,8 @@ scenario pinned to included for both (`M365_SCENARIO=OfficeWebIncludedCopilot`,
 Sonnet 5). `M365_FORCE_AGENT` says the path.
 - premium, agent (`=1`): framing order relay_batch, recency, demo_only, proof_demand, baseline, persona,
   negative, softened, honest, terse_user, relay, retag, terse, fewshot, minimal, session_facts, react;
-- non-premium 1, agent-less (`=0`): that order reversed;
-- non-premium 2, agent-less (`=0`): the order rotated by 8 (honest first).
+- a non-premium account, agent-less (`=0`): that order reversed;
+- another non-premium account, agent-less (`=0`): the order rotated by 8 (honest first).
 340 tasks per account: n = 10 per tone × framing with the agent, 20 without. **Threat:** agent vs
 agent-less is also premium vs non-premium account. If the verdict hinges on a small gap, a premium
 agent-less control (relay_batch, both tones) follows.
@@ -4697,11 +4702,11 @@ caught before they throttled: the fix was copied in at 16:08Z (each arm's bench 
 the one arm already running the old code was paused between tasks until the fixed replay said there
 was room. The premium sweep resumes after the throttle hold: the 5 relay tasks it didn't run
 (`sonnet46-tones-agent-relayfill`), then the 13 remaining arms in order (`sonnet46-tones-agent-b`).
-The pause cost one arm. Non-premium 2's `claude-sonnet` demo_only arm (agent-less) was stopped after
+The pause cost one arm. One non-premium account's `claude-sonnet` demo_only arm (agent-less) was stopped after
 each task; meanwhile the proxy closed the bench's idle keep-alive connection, and each task that came
 next after a solved one failed in 0 s, client-side, before reaching the proxy (`fetch failed: EPIPE` /
 `UND_ERR_SOCKET`): 4 of its 10. Its rows no longer map onto its log, so the arm is left out and re-run
-when that sweep is done (`sonnet46-tones-agentless-2-makeup`). Non-premium 1's paused arm was only held
+when that sweep is done (a make-up arm). The other account's paused arm was only held
 after its last task and is clean. Don't pause a bench between tasks for longer than the proxy's
 keep-alive timeout; stop it instead.
 
@@ -4751,8 +4756,8 @@ WebSocket failures). Every arm mapped onto its log. Sandbox is counted by the `c
 |---|---|---|---|---|---|
 | S, agent (premium) | 167/170 | 3.42 | 3.48 | 0 | 52 |
 | S5, agent (premium) | 168/170 | 3.45 | 3.52 | 0 | 52 |
-| S, agent-less (np 1 + np 2) | 282/338 | 3.15 | 3.55 | 198 | 103 |
-| S5, agent-less (np 1 + np 2) | 273/339 | 3.04 | 3.50 | 199 | 98 |
+| S, agent-less (two non-premium accounts) | 282/338 | 3.15 | 3.55 | 198 | 103 |
+| S5, agent-less (two non-premium accounts) | 273/339 | 3.04 | 3.50 | 199 | 98 |
 
 ### F73 — `Claude_Sonnet_5` @ included is `Claude_Sonnet` @ included, to the bench too 🟢
 Stratified by framing × task, the tones differ on nothing, on either path: with the agent solved
@@ -5136,11 +5141,11 @@ Sonnet 4.6 re-judged against F75 (it would also need a reason to take the agent 
 
 **Design.** `claude-sonnet` (relay_batch, its default), real pi fix-bug + multi, `PI_N=5` per task per
 arm, paced. Premium account, one phase per arm: agent `default`, `batch`, `shell`, agent-less control,
-`defer`, `minimal`, agent-less + `M365_NO_CODE_INTERPRETER=1` (70 runs). H34b replicated on non-premium
-account 2, agent-less control vs no-CI, ABBA (40 runs). (A run on non-premium account 1 was stopped
+`defer`, `minimal`, agent-less + `M365_NO_CODE_INTERPRETER=1` (70 runs). H34b replicated on a non-premium
+account, agent-less control vs no-CI, ABBA (40 runs). (A run on another non-premium account was stopped
 during its first pi run, at the user's request — the account was needed — and is left out.)
 
-**Run notes.** Launched 03:38Z (premium) and 03:39Z (non-premium 2); each arm's debug log names the
+**Run notes.** Launched 03:38Z (premium) and 03:39Z (the non-premium account); each arm's debug log names the
 agent it used (`Using cached agent … (instructions <hash>, variant <name>)`), and every agent arm so far
 ran every turn through the agent, every agent-less arm none. One `default` multi run failed: on its
 first turn the model wrote a correct call and then went on — its own `<tool_response>`, and the rest of
@@ -5159,7 +5164,7 @@ variant that loses runs this way once the stop is in.
 
 ### F87 — it's the agent path, not its instructions and not the code interpreter 🟢
 Premium sweep 03:38–06:00Z, 70 pi runs, every agent run through its own variant's agent and every
-agent-less one without; non-premium 2, 40 runs; plus §30's pi arms (Oct 7). Turns per *solved* run
+agent-less one without; a non-premium account, 40 runs; plus §30's pi arms (Oct 7). Turns per *solved* run
 (failed runs are all runaways, below), task-stratified permutation:
 
 | Oct 8, premium | solved | turns per solved run | fix-bug | multi | `edit` per run | fix + check in one bash, per run |
@@ -5176,7 +5181,7 @@ agent-less one without; non-premium 2, 40 runs; plus §30's pi arms (Oct 7). Tur
   and calls `edit` as often (0.6–0.9 per run). Not the targeted rewording, not the strong shell
   preference, not deferring to the message, not "You are a helpful assistant." alone.
 - **H34b falsified.** Turning the code interpreter off agent-less changes nothing: 3.80 → 3.70 on the
-  premium account (p = 1.0), 4.10 → 4.05 on non-premium 2 (20 runs each, p = 1.0, `edit` 0.50 vs 0.55).
+  premium account (p = 1.0), 4.10 → 4.05 on the non-premium account (20 runs each, p = 1.0, `edit` 0.50 vs 0.55).
 - **The agent path costs the turn, and it replicates.** All five agent arms against both agent-less
   arms today: 3.75 → 4.30 per solved run (+15%, p = 3·10⁻⁵), `edit` 0.25 → 0.74 per run; with §30's
   arms, 3.67 → 4.31 (+18%, p = 10⁻⁵). §30's perfectly uniform +1 was the clean end of it: today the
@@ -5193,3 +5198,158 @@ re-provisioning, and no Opus / GPT re-check is needed), and F75 stands: `Claude_
 variant switch was reverted; the four variants' agents stay provisioned in the tenant (never deleted,
 §10), unused. **Open:** the live stop for runaways (run notes above), which would also cut the
 agent-less path's 4 in 70, and is the one thing here that would change a real pi session.
+
+---
+
+## 35. Oct 8 2026 — stop the turn when the model starts writing its own `<tool_response>` (#65)
+
+**Change.** `handler.ts`, tool requests: as the turn streams, once the composed text holds a self-written
+`<tool_response>` after a real call (the stop sequence `truncateAtFabricatedToolResponse` already cut
+at, after the fact), abort the turn the way a client's Stop does. M365 then ends it with `result:
+Success` ("Stop requested. StopReason: ClientRequested", seen in §34's frames). The cut keeps the head as
+before. `M365_NO_EARLY_STOP=1` turns it off. Who it touches, from past archives: Sonnet 4.6 writes its
+own result on ~60% of turns (§30), Sonnet 5 on 8 of 225, Opus 4.5 on 2 of 255; Opus 5.5, GPT-6, GPT-6 Sol
+and GPT-6.1 Sol on none of 540.
+
+**H35 (fixed before any run).** In real pi the early stop removes the runaway failures (§34: 12 of 60
+agent runs had a turn going on past its call for > 5 k chars, all 6 failures among them, each ended
+by pi's 240 s timeout) and cuts wall time per run, at no cost in solves or turns, and a conversation
+continues normally after a stopped turn. **Falsified if** runs fail after a stopped turn, or turns per
+run go up.
+
+**Decision rule.** Commit the change if, on each path, stop-on solves ≥ stop-off − 1 per 20 runs, turns
+per solved run don't go up (an increase at task-stratified permutation p < 0.05 fails), and no failure
+traces back to a stopped turn (an error or confused reply on the turn after it). Wall time per run is
+reported, not decisive.
+
+**Design.** `claude-sonnet` (relay_batch), real pi fix-bug + multi, `PI_N=5` per task per arm, paced,
+ABBA by arm. A non-premium account, agent-less (the shipped path): on, off, off, on (20 runs each). Premium,
+with the agent (`M365_FORCE_AGENT=1`, where the runaways clustered): off, on, on, off (20 each).
+
+**Run notes.** Launched 06:21Z on both accounts. From 06:59:52Z every new WebSocket on this host failed
+(`WS error: connection failed`, ~20 s per pi run, no M365 turn spent) on both accounts, stop on and off
+alike. The cause was the host, not the change: IPv6 lost its default route (`ENETUNREACH`) while DNS
+kept returning AAAA records first, and Node's address fallback (`autoSelectFamily`) gives each address
+250 ms, under the ~270 ms an IPv4 connect to M365 takes here, so every attempt was cut off
+(`AggregateError`). `--dns-result-order=ipv4first` alone didn't help; with
+`--no-network-family-autoselection` as well, 3/3 connected. Lost to it: the non-premium account's second stop-on arm
+(8 of 10 runs) and the premium second stop-off arm (6 runs; the sweep was stopped at 07:38Z). Those runs
+are transport failures, left out of every score, and each lost arm was re-run whole with
+`NODE_OPTIONS="--no-network-family-autoselection --dns-result-order=ipv4first"`
+(one make-up archive per account). **Lead:** the proxy itself fails this way for any
+user whose IPv6 is broken; a longer per-address timeout on its WebSocket would fix that.
+
+### F88 — stopping early saves a quarter to a third of the wall time and costs nothing the rule counts 🟢 (#65)
+95 pi runs, 15 of them transport failures from the outage (left out); every arm mapped onto its log.
+Turns and seconds per *solved* run, task-stratified permutation:
+
+| path | early stop | solved | turns | seconds | early stops (runs with one) | runaways |
+|---|---|---|---|---|---|---|
+| agent-less (a non-premium account) | on | 22/22 | 4.41 | **32.3** | 30 (21 of 22) | 0 |
+| agent-less (a non-premium account) | off | 19/20 | 4.16 | 43.2 | 0 | 0 |
+| agent (premium) | on | 18/18 | 4.44 | **35.1** | 27 (18 of 18) | 0 |
+| agent (premium) | off | 20/20 | 4.40 | 53.7 | 0 | 2 |
+
+- **Wall time:** −25% agent-less (p = 2·10⁻⁵), −35% with the agent (p = 10⁻⁵). The stop lands 50–300
+  chars into the turn; M365 acknowledges it in ~0.4 s and the socket closes ~0.8 s after the stop, with
+  60–800 chars more on the wire, which the cut removes as before.
+- **No harm on the turn after:** 39 runs had at least one stopped turn (57 stops), and every one solved.
+  The one failure, stop off, answered in prose on its first turn.
+- **Runaways:** 2 with the stop off (premium; both cut afterwards, neither long enough to time the run
+  out), 0 with it on. Too rare in this sample to show §34's failures going away; mechanically, a stopped
+  turn can't run on.
+- **Turns:** not up by the rule's test — agent-less 4.16 → 4.41 (p = 0.065), with the agent 4.40 → 4.44
+  (p = 1.0). But the agent-less shift has a mechanism. With the stop off, the model's first turn goes on
+  past its `cat` and writes the fix as one `sed -i … && python3 check.py`, inside its invented
+  continuation; M365 keeps that whole message in the conversation, and on the next turn the model
+  follows its own plan. With the stop on, that plan never reaches the conversation, and it uses pi's
+  `edit` and checks separately. fix-bug: merged fix and check in 6 of 10 runs off vs 1 of 12 on, turns
+  3.50 → 3.92 (p = 0.12); multi unchanged (4.90 → 5.00).
+
+**Decision:** passes the rule on both paths → committed (`handler.ts`, `M365_NO_EARLY_STOP=1` to opt out).
+H35 holds except for the turn count, which moved the wrong way on one task without reaching the rule's
+line. **Lead:** the note the proxy sends after a cut ("only the first tool call in your previous reply
+was actually run…") could invite the merge the invented plan used to provide. *(Superseded: the turn
+cost replicated after the rebase, and the default became a 2,000-char cap on the tail, F89.)*
+
+### Follow-up, Oct 11: after the rebase onto main, the turn cost replicates
+
+**Smoke, premium account, rebased build** (session routing #49, image input #66 and the rest of main
+underneath), stop on, `PI_N=5`: 10/10 with the agent, 10/10 agent-less. But no turn there streamed: every
+`claude-sonnet` turn arrived as one `streamingMode: "Full"` update when M365 had finished it (97 of 97), so
+each stop fired only when the whole text landed (median 319 chars past the tag, up to 19 k; Oct 8, the
+same account and model: 16–17, every turn `Delta`). **No change in this repo caused it:** the pre-rebase
+build (`9e2d9f1` plus §34/§35's own commits, so none of #44, #49, #66, #67, #68 or the fence fix), which
+streamed there on Oct 8, gets `Full` there today too (4 of 4 turns, plain and tool requests); its request
+frames, frame shapes and debug log match Oct 8's but for ids and content; `M365_NO_SESSION_ROUTING=1`
+gives `Full` on the rebased build as well (2 arms each way, 8 turns). It covers every Claude tone tried on
+the premium account, on both scenarios: `Claude_Sonnet` @ included (Sonnet 4.6), `Claude_Sonnet_5` @ paid
+(Sonnet 5) and `Claude_Sonnet` @ paid (Sonnet 5.5), 1 plain turn each, all `Full`. Not GPT: on the same
+account `gpt-6.1-sol` and `gpt-5.6` stream (309 and 334 `Delta` updates). Not the non-premium accounts:
+there `claude-sonnet` streams, tool requests and plain ones alike, on the old build and on main, routing
+on and off. The premium account's last Claude turn that streamed was Oct 8 14:36Z and its first `Full`-only
+one Oct 11 14:47Z, with no Claude turn there in between. So M365 stopped streaming Claude to the premium
+account in that window; there the stop can't come early.
+
+**Replicate, both non-premium accounts, rebased build**, agent-less, stop on vs off, one order per account
+(on, off / off, on), 20 runs a side. Every turn streamed; every stop landed 16 chars past the tag.
+
+| agent-less | solved | M365 turns per run | seconds per run | stops (runs with one) | runaways |
+|---|---|---|---|---|---|
+| stop on | 20/20 | 4.25 | **24.6** | 20 (20) | 0 |
+| stop off | 20/20 | 3.90 | 38.0 | 0 | 2 |
+
+Seconds −35% (p = 5·10⁻⁵). Turns +9%, task-stratified p = 0.049; with §35's agent-less arms (4.00 → 4.41
+by this count, p = 0.073) pooled, 3.95 → 4.33, +10%, **p = 0.004**, multi alone 4.45 → 5.00 (p = 0.003).
+The mechanism replicates too: with the stop on, Sonnet 4.6 merges fix and check into one bash call less
+(0.60 → 0.25 per run; on multi 0.60 → 0.00) and calls pi's `edit` more (0.40 → 0.75). So on
+`claude-sonnet`'s shipped path (Sonnet 4.6, agent-less) the stop at the tag **fails the rule's turn
+test**: it trades 10% more turns (throttle budget) for 35% less wall time. Invented tails are short as a
+rule (stop-off turns, both paths: median ~400 chars, p90 2.1–2.7 k, p95 2.6–4.3 k, longest 10 k here;
+§34's runaways ran 45–69 k), and the ones the model followed with a merged call were 81–1,428 chars.
+
+**H35b (fixed before any run).** Stopping only once the invented tail passes a cap
+(`M365_EARLY_STOP_AFTER`, chars past the tag) keeps the turns at the stop-off level — the short tails
+that carry the plan run to their end — and still ends runaways, at ~215 chars a second within ~10 s
+(2 k) or ~25 s (5 k) instead of minutes. **Falsified if** a cap's turns are above stop-off at p < 0.05.
+
+**Design.** `claude-sonnet` agent-less, real pi fix-bug + multi, `PI_N=5` per task per arm, both
+non-premium accounts in parallel, four arms each, reversed between the accounts: stop off
+(`M365_NO_EARLY_STOP=1`), stop at the tag (`=0`), cap 2,000, cap 5,000 (20 runs per arm).
+
+**Decision rule.** A cap passes if it solves ≥ stop-off − 1 per 20, its turns per run aren't above
+stop-off at task-stratified p < 0.05, and no failure traces back to a stopped turn. The smallest passing
+cap becomes the default. If none passes, the stop stays opt-in.
+
+**Run notes.** Launched 16:17Z on both non-premium accounts, each with its own proxy port; both ran
+clean (no throttle, no transport failure), every turn streamed.
+
+### F89 — a 2,000-char cap keeps the turns and still ends the runaways; the stop at the tag costs 10% 🟢 (#65)
+160 pi runs, every one solved (20/20 per arm), every arm mapped onto its log. Per run, task-stratified
+permutation against stop-off:
+
+| agent-less | M365 turns | vs stop-off | seconds (mean / median / max) | vs stop-off | stops | runaways (cut > 5 k) |
+|---|---|---|---|---|---|---|
+| stop off | 4.10 | | 47.5 / 39 / 199 | | 0 | 2 (longest 36 k) |
+| stop at the tag (`=0`) | 4.55 | +11%, p = 0.018 | 20.3 / 19 / 31 | −57%, p < 10⁻⁴ | 40 | 0 |
+| cap 2,000 | 4.20 | +2%, p = 0.74 | 31.5 / 31 / 76 | −34%, p = 0.035 | 3 | 0 |
+| cap 5,000 | 4.35 | +6%, p = 0.21 | 36.0 / 37 / 63 | −24%, p = 0.22 | 0 | 0 |
+
+- **The stop at the tag costs turns, a third time.** Pooled over its three A/Bs (§35, the rebase
+  replicate, this sweep): 4.00 → 4.40 per run, +10%, p = 8·10⁻⁵ (60 vs 62 runs). The mechanism reads
+  less cleanly here: `edit` calls go up again (0.60 → 0.90 per run), but merged fix + check calls don't
+  separate (0.40 vs 0.45), so "the model follows its own short tail as a plan" holds in two of three
+  sweeps.
+- **The caps keep the turns.** H35b holds: neither cap is above stop-off (2 k: +2%; 5 k: +6%, with no
+  stop at all, so that is the noise). Against both Oct 11 stop-off arms pooled (40 runs), cap 2 k is
+  +5%, p = 0.17. The 2 k cap stopped 3 turns, each ~2,003 chars past the tag; the longest invented tail
+  was 2,056 chars in the 2 k arm and 4,537 in the 5 k one, while stop-off had two runaways, one a
+  36 k-char turn in a 199 s run.
+- **Wall time.** The stop at the tag is fastest; cap 2 k still saves a third of stop-off's mean (its
+  median 31 vs 39 s), most of it the runaways it ends.
+
+**Decision:** cap 2,000 is the smallest passing cap → the default (`M365_EARLY_STOP_AFTER`, `0` for the
+stop at the tag, `M365_NO_EARLY_STOP=1` to opt out). The agent path wasn't re-run: its turns didn't move
+with the stop at the tag (F88), and the premium account doesn't stream Claude today, so a stop there
+can't come early anyway. **Open:** whether M365 streams Claude to the premium account again, and what else
+the `Full`-only turns change for streaming clients there.

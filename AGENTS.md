@@ -287,6 +287,13 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
 - **A turn can hold several bot messages; assemble text per message.** Each new message's head
   arrives only as a snapshot with a `cursor`; folding everything into one string drops it (it ate
   a fence's backticks). `TurnTextComposer` in `session.ts` — don't "simplify" it away. #29.
+- **A tool turn is stopped once the model's own `<tool_response>` after a call runs past 2,000 chars**
+  (#65, `runBuffered` in `handler.ts`): waiting for M365 to finish let invented continuations run for
+  minutes, past pi's timeout. Not at the tag itself: M365 keeps the whole message, Sonnet 4.6 seems to
+  follow a short tail as its plan, and stopping at the tag cost it 10% more turns in real pi; the
+  2,000-char cap costs none measurable and still ends the runaways (hyp §35 F88, F89). The
+  after-the-fact cut stays; the stop only ends the turn sooner. `M365_EARLY_STOP_AFTER` sets the cap
+  (`0` = at the tag), `M365_NO_EARLY_STOP=1` opts out.
 - **Array/object tool params come back in two shapes; the parser reads both.** The tools block shows
   `edits: <edits>`. Opus writes inline JSON (`edits: [{…}]`); Sonnet 4.6 writes a YAML block list under
   an empty `edits:`, which used to arrive as `edits: []` — 44 of its 47 pi `edit` calls, each a wasted

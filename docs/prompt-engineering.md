@@ -43,7 +43,8 @@ These are what actually move compliance. In rough order of importance:
    with a tool call is an action), confab retry, hallucinated-completion retry, tool-result
    labelling, one-call-per-turn, stripping invented `{confidence}`/`{final}` JSON, treating a
    model-written `<tool_response>` as a stop sequence (Sonnet 4.6 invents one in about half
-   its turns), and telling the model on the next turn when only its first call ran. See
+   its turns; the turn is stopped once that tail passes 2,000 chars, #65), and telling the model on
+   the next turn when only its first call ran. See
    [`tool-calling.md`](tool-calling.md), [hyp §20 F39, F41].
 
 ## Claude Sonnet: don't *cage* it, don't *label* things `<system>`
