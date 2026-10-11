@@ -124,6 +124,7 @@ export {
   looksLikeHallucinatedCompletion,
   looksLikeRemoteArtifactCompletion,
   truncateAtFabricatedToolResponse,
+  fabricatedToolResponseAt,
   textAfterFirstToolCall,
   isProseDocument,
   formatToolResponse,

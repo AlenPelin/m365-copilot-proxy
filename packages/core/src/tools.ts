@@ -428,11 +428,17 @@ const ANY_FENCE = /```[A-Za-z0-9_.-]+[ \t]*\r?\n[\s\S]*?```/;
  * is not a model predicting ITS OWN call's result.
  */
 export function truncateAtFabricatedToolResponse(text: string, tools?: ToolDef[]): string {
+  const i = fabricatedToolResponseAt(text, tools);
+  return i < 0 ? text : text.slice(0, i).trimEnd();
+}
+
+/** Where the stop sequence starts in `text` (see truncateAtFabricatedToolResponse), or -1. */
+export function fabricatedToolResponseAt(text: string, tools?: ToolDef[]): number {
   const i = text.search(SELF_WRITTEN_RESULT);
-  if (i < 0) return text;
+  if (i < 0) return -1;
   const head = text.slice(0, i);
   const acted = tools && tools.length > 0 ? parseToolCalls(head, tools).hasToolCalls : ANY_FENCE.test(head);
-  return acted ? head.trimEnd() : text;
+  return acted ? i : -1;
 }
 
 /**

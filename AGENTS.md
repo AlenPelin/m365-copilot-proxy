@@ -251,8 +251,12 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
 - **Not every tone serves with the tool agent — `toneUsesToolAgent()` decides, per exact tone**
   (`M365_FORCE_AGENT=1`/`0` overrides it either way).
   Claude tones (except `Claude_Opus`, see above) and `Gpt_6_Reasoning` go agent-less even with tools.
-  The Sonnets were benched with the agent on a premium account (§30 F75): it removes their sandbox, but
-  Sonnet 5 then refuses the harness and Sonnet 4.6 spends a turn more per pi run — don't add them. With the agent attached GPT-6 is
+  `Claude_Sonnet` and `Claude_Sonnet_5` were benched with the agent on a premium account (§30 F75): it
+  removes the sandbox of Sonnet 4.6, Sonnet 5 and Sonnet 5.5, but Sonnet 5 (`Claude_Sonnet_5` @ paid)
+  then refuses the harness and Sonnet 4.6 (`Claude_Sonnet` and `Claude_Sonnet_5` @ included) spends a
+  turn more per pi run — don't add them.
+  That extra turn is the agent path's own: four other agent instruction texts didn't move it (§34 F87).
+  With the agent attached GPT-6 is
   a dead route on every account (`result: InternalError`; the proxy used to 502 on it, #41), and
   Claude is dead on non-premium accounts. Add a tone to `AGENTLESS_TOOL_TONES` only after
   `scripts/agent-tone-probe.mjs` says so. Agent-less also means M365's code interpreter is on, and under `baseline` GPT-6
@@ -283,6 +287,13 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
 - **A turn can hold several bot messages; assemble text per message.** Each new message's head
   arrives only as a snapshot with a `cursor`; folding everything into one string drops it (it ate
   a fence's backticks). `TurnTextComposer` in `session.ts` — don't "simplify" it away. #29.
+- **A tool turn is stopped once the model's own `<tool_response>` after a call runs past 2,000 chars**
+  (#65, `runBuffered` in `handler.ts`): waiting for M365 to finish let invented continuations run for
+  minutes, past pi's timeout. Not at the tag itself: M365 keeps the whole message, Sonnet 4.6 seems to
+  follow a short tail as its plan, and stopping at the tag cost it 10% more turns in real pi; the
+  2,000-char cap costs none measurable and still ends the runaways (hyp §35 F88, F89). The
+  after-the-fact cut stays; the stop only ends the turn sooner. `M365_EARLY_STOP_AFTER` sets the cap
+  (`0` = at the tag), `M365_NO_EARLY_STOP=1` opts out.
 - **Array/object tool params come back in two shapes; the parser reads both.** The tools block shows
   `edits: <edits>`. Opus writes inline JSON (`edits: [{…}]`); Sonnet 4.6 writes a YAML block list under
   an empty `edits:`, which used to arrive as `edits: []` — 44 of its 47 pi `edit` calls, each a wasted

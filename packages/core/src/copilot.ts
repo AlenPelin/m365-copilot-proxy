@@ -313,9 +313,10 @@ export const AGENTLESS_TOOL_TONES: ReadonlySet<string> = new Set([
  *   at all — the paid scenario is unlicensed there (F46), and the included one
  *   is dead with and without the agent.
  *
- * Not the Sonnet tones (docs §30, benched on a premium account, where their
- * agent route serves). The agent takes every Sonnet out of its own sandbox,
- * but costs more than that's worth: Sonnet 5 (`Claude_Sonnet_5`, paid) reads
+ * Not `Claude_Sonnet` or `Claude_Sonnet_5` (docs §30, benched on a premium
+ * account, where their agent route serves). The agent takes Sonnet 4.6,
+ * Sonnet 5 and Sonnet 5.5 out of their own sandboxes, but costs more than
+ * that's worth: Sonnet 5 (`Claude_Sonnet_5`, paid) reads
  * the agent's enterprise tools against the harness and refuses it (10/20 vs
  * 19/20 agent-less); Sonnet 4.6 (`Claude_Sonnet`, included) solves the same
  * but spends one more turn per real-pi run (4.4 vs 3.5), using pi's `edit`
