@@ -74,6 +74,8 @@ than "we eyeballed one run." See §M (Methods) for the experimental rig.
 - §32 — one conversation, two backends (Oct 4 2026): each turn's new connection landed on a random
   backend, the regions kept separate copies of the conversation, and about half the turns ran on a
   partial history; `X-RoutingParameter-SessionKey` pins a conversation to one backend (F85)
+- §33 — image input (#39): the web client's upload + `ImageFile` annotation works with the chat token,
+  agent-less and with the tool agent, no extra optionsSets (F86, confirms H8.10)
 
 ---
 
@@ -1574,7 +1576,7 @@ Microsoft's own red-team tool — plus the official extensibility docs. All 🔴
 | # | Hypothesis | Why plausible | Probe | Payoff |
 |---|---|---|---|---|
 | **H8.9** | **Web search is a deterministic toggle:** `plugins:[]` + `optionsSets:["nosearchall"]` = off; our current `plugins:[{BingWebSearch}]` forces it on. | SydneyQt: `if NoSearch && len(Plugins)==0 { append("nosearchall") }`. Audit schema logs `AISystemPlugin:[{Id:"BingWebSearch"}]` only when search fired. | Same fresh-fact query with each config; watch `InternalSearchQuery`/`sourceAttributions` appear only when on; measure latency delta. | Off = faster, deterministic coding answers, no web derail. On (when wanted) = up-to-date docs + citations. |
-| **H8.10** | **Image INPUT (vision)** works by POSTing the image to a substrate `UploadFile` endpoint (PyRIT: `/m365Copilot/UploadFile`; SydneyQt consumer analog: `bing.com/images/kblob`) → `docId`/`BlobId`, then attaching `messageAnnotations:[{id,messageAnnotationType:"ImageFile"}]` with `optionsSets:["cwcgptvsan",…]`. NOT via `entityAnnotationTypes`. | PyRIT implements the full enterprise flow incl. header `X-Variants:feature.EnableImageSupportInUploadFile`. | Replicate the upload POST with a screenshot, attach annotation, ask "what's in this image?"; confirm pixel-level vision. | Screenshots of errors, UI mockups, diagrams as agent input. |
+| **H8.10** | **Image INPUT (vision)** works by POSTing the image to a substrate `UploadFile` endpoint (PyRIT: `/m365Copilot/UploadFile`; SydneyQt consumer analog: `bing.com/images/kblob`) → `docId`/`BlobId`, then attaching `messageAnnotations:[{id,messageAnnotationType:"ImageFile"}]` with `optionsSets:["cwcgptvsan",…]`. NOT via `entityAnnotationTypes`. | PyRIT implements the full enterprise flow incl. header `X-Variants:feature.EnableImageSupportInUploadFile`. | Replicate the upload POST with a screenshot, attach annotation, ask "what's in this image?"; confirm pixel-level vision. | Screenshots of errors, UI mockups, diagrams as agent input. **🟢 §33 F86** (no extra optionsSets needed). |
 | **H8.11** | **Graph/Work grounding** is gated by `entityAnnotationTypes` breadth + CIQ variants (`feature.EnableLuForChatCIQ`, `feature.enableChatCIQPlugin`) + `optionsSets:["at_mention_plugins_enable"]`; currently dormant because optionsSets is empty. | We already send the entity types; Zenity + audit schema confirm Graph entities (`TeamsChat`, mail, files) are grounding sources. | Enable CIQ variants, @-reference a real OneDrive file, watch for grounded citations. | M365 tenant data as a RAG backend — retrieval no other LLM API gives. |
 | **H8.12** | **Long-document QA** is gated by `optionsSets:["ldqa","ldsummary"]` paired with a `File` entity; improves deep-in-doc recall and may route through the separate `numLongDocSummary…` counter (→ H8.18). | `ld*` flags in SydneyQt defaults; MS "summarization needs whole-doc context" docs. | Reference a long file, needle question, toggle `ldqa`/`ldsummary`. | Reliable long-context grounding (logs, specs, PDFs). |
 
@@ -5041,3 +5043,39 @@ conversations; the run did not trip the throttle.
 **What this re-opens.** Before the fix, every multi-turn measurement ran with about half its turns on a
 partial history. A/B comparisons stay fair (their arms forked alike), but absolute numbers — turns per
 task, give-up rates, follow-ups that drift back to the first request — are worth re-measuring.
+
+---
+
+## 33. Oct 8 2026 — image input (#39)
+
+The proxy forwarded only the text of a message, so a model behind it never saw an image: not a
+screenshot the user pasted, not a chart the agent had just drawn and `read` back (#39). H8.10 had the
+web client's flow from PyRIT but was never run.
+
+### F86 — the web client's upload works with the chat token, on both paths, with no extra optionsSets 🟢
+`scripts/image-input-probe.mjs`: a 600×400 bar chart titled "Lot ZEPHYR-4821" with bars 37/82/15,
+uploaded to `/m365Copilot/UploadFile` through `ModelSession` (the proxy's token), the `docId` sent as an
+`ImageFile` `messageAnnotation`, and asked for the title and numbers; one fresh conversation per arm,
+`gpt-5.6-think-deeper`:
+
+| arm | answer | expected parts |
+|---|---|---|
+| agent-less, GPT-V optionsSets (`enterprise_flux_work_gptv`, `cwcgptvsan`, `flux_v3_gptv_…`) | "Title: Lot ZEPHYR-4821; numbers: 37, 82, 15." | 4/4 |
+| agent-less, annotation only | the same | 4/4 |
+| with the tool agent | the same | 4/4 |
+| control, no image | "No image is attached." | 0/4 |
+
+The title and the numbers can't be guessed, and the control shows the question alone doesn't produce
+them. The GPT-V optionsSets made no difference, so the proxy sends none (fewer moving parts on a turn,
+and optionsSets have changed behaviour before, §8.9). n = 1 per arm; one model.
+
+**Shipped.** `core/src/image-input.ts` uploads a data-URL image and builds the annotation;
+`ModelSession.run(…, images)` uploads before the turn and says in the text when an upload failed, so the
+model doesn't describe an image it never got; the handler takes the `image_url` parts of the messages a
+turn carries (all of them for a full prompt and the fresh-conversation retries, the new ones for a
+delta), and drops them once a turn has gone through, so a forcing retry in the same conversation doesn't
+attach them twice. pi sends images only for a model whose `models.json` entry lists
+`"input": ["text", "image"]`; a `read` of a PNG then arrives as a user message "Attached image(s) from
+tool result:" with the image, right after the tool result.
+**Not covered:** `http(s)` image URLs (pi sends data URLs; others would need fetching first), and other
+models than `gpt-5.6-think-deeper`.
