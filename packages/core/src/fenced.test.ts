@@ -208,6 +208,20 @@ describe("parseFencedToolCalls", () => {
     expect(calls.map((c) => JSON.parse(c.function.arguments).command)).toEqual(["ls"]);
   });
 
+  // Shapes the pre-scanner regex accepted, so a call the model already got
+  // through must not now vanish into prose: the model would read the empty turn
+  // as "I have no tools".
+  it("still parses a call whose closing fence is glued to the command", () => {
+    const { calls } = parseFencedToolCalls("```bash\nls -la```", specs);
+    expect(calls.map((c) => JSON.parse(c.function.arguments).command)).toEqual(["ls -la"]);
+  });
+
+  it("still parses a call whose opening fence follows prose on the same line", () => {
+    const { calls, leftover } = parseFencedToolCalls("Running it: ```bash\nls -la\n```", specs);
+    expect(calls.map((c) => JSON.parse(c.function.arguments).command)).toEqual(["ls -la"]);
+    expect(leftover.trim()).toBe("Running it:");
+  });
+
   it("drops an edit fence missing SEARCH/REPLACE markers", () => {
     const { calls } = parseFencedToolCalls("```edit_file\npath: a.py\njust some text\n```", specs);
     expect(calls).toHaveLength(0);

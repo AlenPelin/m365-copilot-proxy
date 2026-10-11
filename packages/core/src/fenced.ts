@@ -75,7 +75,6 @@ const SHELL_LANGS = new Set([
 // uses `bash`, opencode `bash`, hermes `shell`/`run`, openclaw `run_command` — all caught.
 const SHELL_TOOL_NAME = /^(bash|sh|shell|zsh|run|exec|execute|command|cmd|terminal|run_command|run_terminal_cmd|execute_command|execute_bash|shell_exec|system)$/i;
 
-/** The harness tool (if any) that runs a shell command — the target for ```bash routing. */
 const WRITE_PATH_PARAM = /^(path|file_path|filepath|filename|file)$/i;
 const WRITE_CONTENT_PARAM = /^(content|contents|text|body)$/i;
 
@@ -155,6 +154,7 @@ export function longHeredocAsWrite(
   };
 }
 
+/** The harness tool (if any) that runs a shell command — the target for ```bash routing. */
 export function findShellTool(tools: ToolDef[]): ToolDef | undefined {
   return tools.find((t) => SHELL_TOOL_NAME.test(t.function.name)) ??
     // fallback: a single-string-param tool whose param is command-ish
@@ -907,6 +907,12 @@ export const FRAMING_VARIANT_NAMES = Object.keys(FRAMING_VARIANTS);
 // parseFencedToolCalls, so widening this costs nothing.
 const FENCE_OPEN = /^[ \t]*```([A-Za-z0-9_.-]*)[ \t]*$/;
 const FENCE_CLOSE = /^[ \t]*```[ \t]*$/;
+// The looser shapes the pre-scanner regex also took, and the model does emit:
+// prose then an opener on one line ("Running it: ```bash"), and a closer glued
+// to the last line of the body ("ls -la```"). Only honoured at the outermost
+// level, where they can't be mistaken for nesting.
+const FENCE_OPEN_MIDLINE = /```([A-Za-z0-9_.-]+)[ \t]*$/;
+const FENCE_CLOSE_GLUED = /\S```[ \t]*$/;
 
 interface FenceBlock {
   info: string;
@@ -941,8 +947,9 @@ function scanFences(text: string): FenceBlock[] {
     const lineEnd = offset + raw.length;
     const opener = FENCE_OPEN.exec(line)?.[1];
     if (depth === 0) {
-      if (opener) {
-        open = { info: opener, start: offset, bodyStart: lineEnd + 1 };
+      const midline = opener ? null : FENCE_OPEN_MIDLINE.exec(line);
+      if (opener || midline) {
+        open = { info: opener || midline![1], start: offset + (midline?.index ?? 0), bodyStart: lineEnd + 1 };
         depth = 1;
       }
     } else if (FENCE_CLOSE.test(line)) {
@@ -954,6 +961,11 @@ function scanFences(text: string): FenceBlock[] {
       }
     } else if (opener) {
       depth++;
+    } else if (depth === 1 && open && FENCE_CLOSE_GLUED.test(line)) {
+      const inner = text.slice(open.bodyStart, offset + line.trimEnd().length - 3);
+      blocks.push({ info: open.info, inner, start: open.start, end: lineEnd });
+      open = null;
+      depth = 0;
     }
     offset = lineEnd + 1;
   }
