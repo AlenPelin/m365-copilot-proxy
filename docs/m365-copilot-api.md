@@ -55,6 +55,7 @@ wss://substrate.office.com/m365Copilot/Chathub/{oid}@{tid}?{query}
 
 ### Client and scopes
 - **Client ID:** `c0ab8ce9-e9a0-42e7-b064-33d422df41f1` (a Microsoft first-party app id — *we did not register this*; it's the Office web Copilot client).
+- **Work or school accounts only.** The client rejects a personal Microsoft account at the username step ("You can't sign in here with a personal account", #64), and consumer Copilot (M365 Personal/Family, copilot.microsoft.com) is a different service anyway; it does not serve `substrate.office.com/m365Copilot`.
 - **Authority:** `https://login.microsoftonline.com/common`
 - **Redirect URI:** `https://login.microsoftonline.com/common/oauth2/nativeclient`
 - **Chat scopes:**

@@ -59,7 +59,12 @@ Each agent session reuses the same M365 conversation (same `sessionId` + `conver
 
 - Node.js 24+
 - pnpm 10+
-- An M365 account with Copilot access
+- A **work or school (Entra ID) account** with M365 Copilot Chat. Personal Microsoft
+  accounts — Microsoft 365 Personal/Family, Outlook.com, copilot.microsoft.com — are
+  not supported: the proxy talks to the enterprise M365 Copilot service, and the Office
+  client it signs in as rejects personal accounts ("You can't sign in here with a
+  personal account", #64). "Every account" elsewhere in this README means every work
+  or school account, premium or not.
 - A way to sign in, either:
   - **TOTP-based MFA with the base32 secret in hand** — the automated login types the
     6-digit code itself, so it needs the seed, not an app on your phone. See
