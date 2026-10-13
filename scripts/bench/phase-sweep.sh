@@ -54,9 +54,12 @@
 # of ~100 turns, refilled at ~1.6 a minute, runs dry (hypotheses §24 F58).
 # Before every bench task and every pi run the drivers then wait until the
 # proxies' debug logs (this archive included) say there's room for a whole task
-# plus a reserve — scripts/bench/turn-budget.mjs. The sweep runs at the account's
-# pace instead of tripping the throttle, which makes it much slower: ~1.6 turns
-# a minute once the bucket is down to the reserve. Off by default.
+# plus a reserve — scripts/bench/turn-budget.mjs. The proxies inherit the
+# variable and also wait before each upstream turn (the same model, same
+# reserve), which only matters when a task runs past its allowance. The sweep
+# runs at the account's pace instead of tripping the throttle, which makes it
+# much slower: ~1.6 turns a minute once the bucket is down to the reserve. Off
+# by default.
 # `node scripts/bench/turn-budget.mjs status` shows where the bucket stands.
 #
 # The sweep stops at the first throttled bench task or pi run (FAILED says where);

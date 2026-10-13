@@ -24,6 +24,7 @@ import {
   ACTION_ALLOWED_MESSAGE_TYPES,
 } from "./native-actions.js";
 import { createLogger, trunc, FRAME_DIR } from "./log.js";
+import { recordThrottle, recordTurn } from "./turn-budget.js";
 import { parseMetering, meteredAllowance, METERED_BUDGETS, type MeteredBudget } from "./priority-access.js";
 
 const RS = "\x1E";
@@ -332,6 +333,7 @@ export class CopilotSession {
     const images = opts?.images ?? [];
 
     log.info(`Chat turn ${this._turnCount - 1}: model=${model}, isFirst=${isFirst}, text=${JSON.stringify(trunc(text, 200))}`);
+    recordTurn(); // the throttle-avoidance bucket counts what that line counts (turn-budget.ts)
 
     const claims = decodeJwt(token);
     const requestId = crypto.randomUUID();
@@ -842,6 +844,7 @@ export class CopilotSession {
                 ...(typeof item.result.message === "string" ? { message: item.result.message } : {}),
               };
               if (item.result.value !== "Success") log.info(`Turn result: ${item.result.value}${serverResult.errorCode ? ` (${serverResult.errorCode})` : ""}`);
+              if (item.result.value === "Throttled") recordThrottle();
             }
             if (item.turnState) turnState = item.turnState;
             if (item.throttling) {
