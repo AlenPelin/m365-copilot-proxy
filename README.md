@@ -306,7 +306,7 @@ without NixOS: `nix run github:cramt/m365-copilot-proxy -- 4141`.
 | `claude-sonnet-5` | Claude_Sonnet_5 (paid scenario) | Claude Sonnet 5. **Needs a paid/premium Copilot seat**; no separate quota. 27/30 on the bench with the `relay` framing (6/40 with `baseline`; see below) |
 | `claude-sonnet-think-deeper` | Claude_Sonnet_Reasoning | Claude reasoning |
 | `claude-opus` / `claude-opus-5.5` | Claude_Opus (paid scenario) | Claude Opus 5.5. **Needs a paid/premium Copilot seat** and has a small separate quota: 40 turns a day (see below). 10/10 on the bench with `relay`; defaults to `relay_batch`. `claude-opus-5` is kept as an alias |
-| `claude-opus-4.5` | Claude_Opus (included scenario, tool agent) | Claude Opus 4.5. **Premium accounts only**, but **no** priority-access quota. With its default `relay_batch` framing: 20/20 on the bench at 2.3 turns per task, 10/10 driving real pi |
+| `claude-opus-4.8` | Claude_Opus (included scenario) | Claude Opus 4.8. **Premium accounts only**, but **no** priority-access quota. With its default `relay_batch` framing and the tool agent: 30/30 on the bench at 2.5 turns per task, 10/10 driving real pi. `claude-opus-4.5` is kept as an alias (it was Opus 4.5 until October 2026) |
 | `gpt-5.4` / `gpt-5.4-quick` | Gpt_5_4_* | GPT-5.4 |
 | `gpt-5.3` / `gpt-5.3-think-deeper` | Gpt_5_3_* | GPT-5.3 |
 | `gpt-5.2` / `gpt-5.2-think-deeper` | Gpt_5_2_* | GPT-5.2 |
@@ -462,25 +462,26 @@ fewer turns through real pi (39/39). On Sonnet 5 that saved only 6% in pi, so it
 Sonnet 5.5 starts on `relay` too, until it has been benchmarked.
 Override with `M365_FRAMING_VARIANT` as usual. Details: hypotheses §21, §25, §26.
 
-### Opus (`claude-opus`, `claude-opus-4.5`) — two models, one with a small quota
+### Opus (`claude-opus`, `claude-opus-4.8`) — two models, one with a small quota
 
 The `Claude_Opus` tone serves two models, picked by the `scenario` the WebSocket is opened with:
 
 | Model ID | Model | Scenario | Who can use it | Quota |
 |---|---|---|---|---|
 | `claude-opus` (`claude-opus-5.5`, `claude-opus-5`) | Claude Opus 5.5 | `OfficeWebPaidCopilot` | paid/premium seat | small priority-access quota |
-| `claude-opus-4.5` | Claude Opus 4.5 | `OfficeWebIncludedCopilot`, tool agent attached | premium account | none beyond the usual throttling |
+| `claude-opus-4.8` (`claude-opus-4.5`) | Claude Opus 4.8 | `OfficeWebIncludedCopilot` | premium account | none beyond the usual throttling |
 
 The proxy picks the scenario from the model ID, so nothing has to be configured. This is an
 **entitlement, not a bypass**: without a paid/premium seat neither model serves. `claude-opus`
-then gets a licence-refusal message, and `claude-opus-4.5` a 502 saying it's premium-only. `licenseType`
+then gets a licence-refusal message, and `claude-opus-4.8` a 502 saying it's premium-only. `licenseType`
 alone unlocks nothing; override either with `M365_SCENARIO` / `M365_LICENSE_TYPE`.
 
-**`claude-opus-4.5` only works through the Copilot Studio tool agent**, so the proxy attaches the
-agent to every request on it, tools or not. Without the agent the route returns a canned apology on
-every account, which is why earlier notes in this repo recorded Opus on the included scenario as
-dead. It may introduce itself as "Claude Opus 5": that's what its system prompt says, and the model
-itself mostly answers "Opus 4.5" (see hypotheses §24).
+**`claude-opus-4.8`'s tool requests carry the Copilot Studio tool agent**, like `claude-opus`'s.
+Without the agent Opus 4.8 has a code interpreter of its own, and unless the framing steers it away it
+works there instead of in your harness, reporting success on files it never touched. The default
+`relay_batch` framing does steer it away, and there the two paths solve the same, so the agent is the
+safety margin. Requests without tools go without it. Until October 2026 this route served Claude Opus
+4.5, and only through the agent; `claude-opus-4.5` now reaches Opus 4.8 (see hypotheses §24, §36).
 
 **`claude-opus` is metered separately: 40 turns a day, 75 a week.** Opus 5.5 draws on a "priority
 access" budget distinct from the ~600-message conversation cap, and **every M365 turn costs one,
@@ -496,8 +497,8 @@ What the proxy does about it:
   (`code: priority_access_exhausted`, `param: day|week`) with a `Retry-After` to the reset — on the
   streaming path an `error` chunk with the same fields. It then answers further `claude-opus`
   requests itself until the reset, without spending M365 turns on more refusals.
-- **Can fall back to Opus 4.5:** with `M365_OPUS_FALLBACK_MODEL=claude-opus-4.5`, a `claude-opus`
-  request that hits the wall is sent to `claude-opus-4.5` instead (unmetered, premium accounts only),
+- **Can fall back to Opus 4.8:** with `M365_OPUS_FALLBACK_MODEL=claude-opus-4.8`, a `claude-opus`
+  request that hits the wall is sent to `claude-opus-4.8` instead (unmetered, premium accounts only),
   and so is every later one until the reset. The response's `model` field says which model answered.
 - **Spends fewer turns:** the `relay_batch` framing (below) asks the model to do as much as it can
   per tool call, and avoids the jailbreak-filter retries that cost `claude-opus`'s old default framing
@@ -511,8 +512,9 @@ retry in a fresh conversation), the user-voice `relay` framings on none. And tur
 from 3.65 to 2.30 turns per bench task (20/20 either way) and from 6 to 3.5 turns per real-pi run
 (10/10 either way) — on Opus 5.5 that's ~17 tasks a day instead of ~11. The cost to watch is a
 block that acts before it has seen any output; in pi every edit still came after a read. Opus 5.5
-went 10/10 on the bench with `relay`; it hasn't been benched with `relay_batch` yet.
-Override with `M365_FRAMING_VARIANT` as usual. Details: [hypotheses §24](docs/hypotheses.md).
+went 10/10 on the bench with `relay`; it hasn't been benched with `relay_batch` yet. Opus 4.8, which
+replaced Opus 4.5, went 30/30 with it at 2.5 turns per task.
+Override with `M365_FRAMING_VARIANT` as usual. Details: [hypotheses §24, §36](docs/hypotheses.md).
 
 ## Image generation
 
@@ -605,10 +607,10 @@ Three token scopes are acquired:
 | `M365_NO_INTERACTIVE` | Set to `1` to hard-disable any visible browser login, overriding the flag above. For systemd/CI hosts where a window must never open. |
 | `M365_INTERACTIVE_TIMEOUT_MS` | How long to wait for you to finish the interactive sign-in (default `600000`, i.e. 10 minutes). |
 | `M365_LOGIN_LOCALE` / `M365_LOGIN_TIMEZONE` | Browser locale and timezone presented during login (defaults `en-GB` / `Europe/Copenhagen`). These are part of the anti-bot-scoring fingerprint ([§11 F25](docs/hypotheses.md)) — set them to match your own machine if AAD starts treating your automated login as a bot. |
-| `M365_FORCE_AGENT` | Override which tool requests carry the Copilot Studio tool agent. `1` attaches it to every tool request (and turns off the GPT-6 Sol fallback below); `0` never attaches it. Unset, the proxy decides per model: GPT-5.x, `m365-copilot` and both Opus models take it, the other Claude models and `gpt-6-think-deeper` don't, and `gpt-6-sol` / `gpt-6.1-sol` take it only on a premium account, which the proxy learns from the first request. `claude-opus-4.5` carries it on tool-less requests too, since that's its only route (`0` turns that off as well). On a non-premium account `0` saves the probe turn (~3 s) per GPT-6 Sol model per proxy start. |
-| `M365_OPUS_FALLBACK_MODEL` | Model to serve `claude-opus` (Opus 5.5) requests with once its priority-access budget is used up, instead of returning a 429 — typically `claude-opus-4.5`, which isn't metered (premium accounts only). Applies until the budget resets; the response's `model` field names the model that answered. Unset by default. |
+| `M365_FORCE_AGENT` | Override which tool requests carry the Copilot Studio tool agent. `1` attaches it to every tool request (and turns off the GPT-6 Sol fallback below); `0` never attaches it. Unset, the proxy decides per model: GPT-5.x, `m365-copilot` and both Opus models take it, the other Claude models and `gpt-6-think-deeper` don't, and `gpt-6-sol` / `gpt-6.1-sol` take it only on a premium account, which the proxy learns from the first request. On a non-premium account `0` saves the probe turn (~3 s) per GPT-6 Sol model per proxy start. |
+| `M365_OPUS_FALLBACK_MODEL` | Model to serve `claude-opus` (Opus 5.5) requests with once its priority-access budget is used up, instead of returning a 429 — typically `claude-opus-4.8`, which isn't metered (premium accounts only). Applies until the budget resets; the response's `model` field names the model that answered. Unset by default. |
 | `M365_SONNET_FALLBACK_MODEL` | The same for `claude-sonnet-5.5` (Sonnet 5.5) once its priority-access budget is used up — e.g. `claude-sonnet-5` (unmetered) or `claude-sonnet` (Sonnet 4.6, any account). A fallback naming a metered model is ignored. Unset by default. |
-| `M365_SCENARIO` / `M365_LICENSE_TYPE` | Override the entitlement the WebSocket is opened under (defaults: `OfficeWebIncludedCopilot` / `Starter`, switching to `OfficeWebPaidCopilot` / `Premium` for the entitlement-gated models — `claude-opus`, `gpt-6-think-deeper`, `claude-sonnet-5` and `claude-sonnet-5.5`; `claude-opus-4.5` and `gpt-6.1-sol` stay on the included one). `scenario` is what gates the model list (and picks Sonnet 4.6 vs 5.5 for the `Claude_Sonnet` tone, Sonnet 4.6 vs 5 for `Claude_Sonnet_5`, Opus 4.5 vs 5.5 for `Claude_Opus`); `licenseType` rides along and unlocks nothing by itself. Forcing the paid scenario on `gpt-6.1-sol` spends its separate GPT-6.1 Sol allowance (40 turns a day, 75 a week), which the proxy doesn't track. |
+| `M365_SCENARIO` / `M365_LICENSE_TYPE` | Override the entitlement the WebSocket is opened under (defaults: `OfficeWebIncludedCopilot` / `Starter`, switching to `OfficeWebPaidCopilot` / `Premium` for the entitlement-gated models — `claude-opus`, `gpt-6-think-deeper`, `claude-sonnet-5` and `claude-sonnet-5.5`; `claude-opus-4.8` and `gpt-6.1-sol` stay on the included one). `scenario` is what gates the model list (and picks Sonnet 4.6 vs 5.5 for the `Claude_Sonnet` tone, Sonnet 4.6 vs 5 for `Claude_Sonnet_5`, Opus 4.8 vs 5.5 for `Claude_Opus`); `licenseType` rides along and unlocks nothing by itself. Forcing the paid scenario on `gpt-6.1-sol` spends its separate GPT-6.1 Sol allowance (40 turns a day, 75 a week), which the proxy doesn't track. |
 | `M365_CACHE_FILE` | Override MSAL token cache location |
 | `M365_SECRETS_FILE` | Override credentials file location |
 | `CHROMIUM_PATH` | Path to Chromium binary for automated login |
@@ -679,7 +681,7 @@ pnpm run test:live    # Run live integration tests against M365
 - Tool calling is emulated (prompt injection + a Copilot Studio agent), not native function calling — robust with the agent, unreliable without it
 - The `think-deeper` / `*_Reasoning` models take 10-30s per response
 - Hard quota of ~600 messages **per conversation** (mitigated by session reuse + delta sends)
-- `claude-opus` needs a paid/premium seat and has its own small priority-access quota (40 turns a day, 75 a week; every tool call is a turn) that resets at midnight UTC (weekly on Monday); exhaustion surfaces as a 429, or as a switch to `M365_OPUS_FALLBACK_MODEL`. `claude-opus-4.5` needs a premium account too, but has no such quota
+- `claude-opus` needs a paid/premium seat and has its own small priority-access quota (40 turns a day, 75 a week; every tool call is a turn) that resets at midnight UTC (weekly on Monday); exhaustion surfaces as a 429, or as a switch to `M365_OPUS_FALLBACK_MODEL`. `claude-opus-4.8` needs a premium account too, but has no such quota
 - `claude-sonnet-5.5` needs a paid/premium seat and has a priority-access quota of its own (80 turns a day, 150 a week), handled the same way (`M365_SONNET_FALLBACK_MODEL`). `claude-sonnet-5` needs the seat but has no quota
 - Streaming: **tool-less** responses stream incrementally (deltas forwarded as they arrive). **Tool-calling** turns are still buffered server-side — the raw text has to be parsed for tool-call fences before it can be emitted — so those arrive as a single chunk at the end (with an immediate HTTP 200 + heartbeats so the client never times out waiting)
 

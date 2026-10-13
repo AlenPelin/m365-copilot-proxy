@@ -5,7 +5,7 @@ import {
   trunc,
   getToneForModel,
   requestUsesAgent,
-  modelRequiresAgent,
+  isPremiumOnlyModel,
   noteAgentRouteDead,
   noteAgentRouteAlive,
   isAgentRouteAlive,
@@ -336,7 +336,7 @@ export async function handleChatCompletion(
   // Priority access (§15, §24 F55, §26, issue #18). Once a budget is used up
   // every turn on it is refused until the reset, so don't start one: serve the
   // opt-in fallback model (M365_OPUS_FALLBACK_MODEL, e.g. the unmetered
-  // claude-opus-4.5; M365_SONNET_FALLBACK_MODEL for Sonnet 5.5), or answer the
+  // claude-opus-4.8; M365_SONNET_FALLBACK_MODEL for Sonnet 5.5), or answer the
   // 429 here. A refused turn costs no allowance, but it does cost an M365 turn
   // and often a fresh conversation — what the account's thread-rate throttle
   // counts.
@@ -360,9 +360,9 @@ export async function handleChatCompletion(
   // Which requests carry the declarative tool agent. GPT-the-chat-model won't
   // tool-call agent-less (0/4), so it needs the agent. Claude tool-calls reliably
   // AGENT-LESS via shell-routing (F23), and on a non-premium account the agent
-  // path doesn't serve Claude at all (§22 F44) — except Claude Opus, whose
-  // included-scenario model (Opus 4.5) serves ONLY with the agent (§24), so it
-  // carries the agent even on a tool-less request. `Gpt_6_Reasoning` doesn't serve
+  // path doesn't serve Claude at all (§22 F44) — except Claude Opus, which takes
+  // it: agent-less, Opus 4.8 works in its own code interpreter unless the
+  // framing steers it out (§36). `Gpt_6_Reasoning` doesn't serve
   // with the agent on any account (§22 F45, #41), and `Gpt_6_Sol_Reasoning` /
   // `Gpt_61_Sol_Reasoning` only on a premium one (learned at runtime, see the
   // dead-route fallback in runBuffered). The rule lives in core (`requestUsesAgent`);
@@ -682,12 +682,12 @@ export async function handleChatCompletion(
         await new Promise(r => setTimeout(r, SHORT_RETRY_DELAY_MS));
         text = "Please continue."; // M365 already has context
       } else {
-        // A model that serves only with the agent, on an account whose agent
-        // route doesn't serve it (Opus 4.5 on a non-premium account: BotConnection,
-        // `InternalError`, every time — §24). Not a throttle, so it doesn't feed
-        // the degradation backoff; say what it is instead of "empty response".
-        if (useToolAgent && modelRequiresAgent(model) && copilotStream.result?.value === "InternalError") {
-          log.info(`${model}: agent route returned InternalError on every attempt — premium-only model on a non-premium account?`);
+        // A model served only on a premium account, on a non-premium one (Opus
+        // 4.8: BotConnection, `InternalError`, every time, with the agent and
+        // without — §24, §36). Not a throttle, so it doesn't feed the degradation
+        // backoff; say what it is instead of "empty response".
+        if (isPremiumOnlyModel(model) && copilotStream.result?.value === "InternalError") {
+          log.info(`${model}: InternalError on every attempt — premium-only model on a non-premium account?`);
           return { error: premiumOnlyModelResponse(model) };
         }
         // Final empty after retries, and not an at-limit (per-conversation) cap:
@@ -1119,7 +1119,7 @@ function emptyResponseResponse(throttle: { current: number; max: number } | null
 function premiumOnlyModelResponse(model: string): Response {
   return jsonResponse(502, {
     error: {
-      message: `M365 Copilot didn't serve ${model}: its only route (with the tool agent attached) returned InternalError on every attempt. ${model} is served only on a premium (paid Microsoft 365 Copilot) account; on any other account use claude-sonnet.`,
+      message: `M365 Copilot didn't serve ${model}: it returned InternalError on every attempt. ${model} is served only on a premium (paid Microsoft 365 Copilot) account; on any other account use claude-sonnet.`,
       type: "upstream_error",
       code: "model_route_unavailable",
     },
