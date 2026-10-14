@@ -49,7 +49,8 @@ than "we eyeballed one run." See §M (Methods) for the experimental rig.
   has none; both Opus models move onto the agent and `relay_batch` (the `<system>`-tagged framings
   trip the jailbreak classifier, F56; batching cuts turns ~40%, F60); the refusal isn't streamed and
   issue #18 (F59); Opus's native call markup leaking into fences (F57); four throttles in
-  a day that a per-turn bucket fits better than a conversation count (F58)
+  a day that a per-turn bucket fits better than a conversation count (F58). The route has served Opus
+  4.8 since Oct 2026, agent-less too (§36)
 - §25 — `relay` vs `relay_batch` for the other user-voice tones (Sonnet 4.6/5, GPT-6, GPT-6 Sol):
   batching saves ~33% of turns on the GPT-6 tones and ~15% on the Sonnets (F61); the F58 bucket
   predicts throttles on non-premium accounts too, and the bench can pace itself by it
@@ -87,6 +88,11 @@ than "we eyeballed one run." See §M (Methods) for the experimental rig.
   agent-less; a 2,000-char cap on the invented tail keeps the turns and still ends the runaways, and is
   the default (F89); between Oct 8 and Oct 11 M365 stopped streaming Claude to the premium account (no
   change in this repo caused it)
+- §36 — `Claude_Opus` @ included is now Claude Opus 4.8 (`claude-opus-4.8`; Opus 4.5 until Oct 2026) and
+  serves agent-less too, premium accounts only: tool requests keep the agent — relay_batch ties on the
+  bench, agent-less costs 22% more turns in real pi (F90), and agent-less it has its own code interpreter
+  and writes its own tool results (F91); tool-less requests go agent-less, and the premium-only 502
+  covers every path (F92)
 
 ---
 
@@ -3702,6 +3708,9 @@ comparison p = 6×10⁻¹⁰ (relay 60/60 either way).
 
 ## 24. Oct 4 2026 — Claude Opus 4.5: `Claude_Opus` on the included scenario, through the tool agent only
 
+> **Superseded, Oct 13 2026 (§36):** the route now serves Claude Opus 4.8 (`claude-opus-4.8`;
+> `claude-opus-4.5` is an alias of it), agent-less as well as with the agent.
+
 **Question.** The user's probes on the premium account (2026-10-02/04) show `Claude_Opus` answering
 on the *included* scenario when the tool agent is attached — and identifying as Claude Opus 4.5, not
 the paid scenario's Opus 5.5. Is it a usable second Opus, which accounts serve it, does it draw on the
@@ -5353,3 +5362,105 @@ stop at the tag, `M365_NO_EARLY_STOP=1` to opt out). The agent path wasn't re-ru
 with the stop at the tag (F88), and the premium account doesn't stream Claude today, so a stop there
 can't come early anyway. **Open:** whether M365 streams Claude to the premium account again, and what else
 the `Full`-only turns change for streaming clients there.
+
+## 36. Oct 13 2026 — `Claude_Opus` @ included becomes Opus 4.8, and serves without the tool agent
+
+**Question.** The user's probes on the premium account (2026-10-13 01:37–01:41Z, service
+`1.0.03571.57831`) show `Claude_Opus` on the included scenario self-identifying as **"Claude Opus 4.8;
+Anthropic; 2026-01"**, where it said Opus 4.5 (§24 F54). And it now answers **agent-less**: the route F53
+found dead (8/8) is `DeepLeo`. Which path should `claude-opus-4.8` take for tool requests, and does a
+tool-less request still need the agent?
+
+**Raw data** (local, not in the repo): the user's runs in `scripts/tone-out/` and
+`scripts/agent-tone-out/` in the premium account's checkout and one non-premium account's checkout.
+
+| cell (`Claude_Opus` @ included) | premium | non-premium |
+|---|---|---|
+| agent attached (`agent-tone-probe`) | `DeepLeo`, `3PDeclarativeAgent`: "Claude Opus 4.8; Anthropic" 3/3 (cutoff 2026-01 ×1, 2025-01 ×2) | dead: BotConnection, `result: InternalError` (1/1) |
+| agent-less (`tone-probe`) | `DeepLeo`: "Claude Opus 4.8; Anthropic; 2026-01" 5/5 | dead: BotConnection apology (1/1) |
+
+**When.** Agent-less on the premium account, the last dead cell on record is 2026-10-04 00:28Z; the first
+live one is 2026-10-11 20:26Z (a `pong` prompt, so no self-ID). No probe ran in between. The paid cell
+(Opus 5.5) was at its daily wall in every run, so it says nothing about the paid route. Per the
+self-ID rule, "Opus 4.8" is what it calls itself: the system prompt that made Opus 4.5 say "Opus 5"
+(F54) may be gone or changed, and no `ChainOfThoughtSummary` frame came with these turns.
+
+**Shipped before the sweep:** `claude-opus-4.8` (included scenario, unmetered); `claude-opus-4.5` kept
+as a legacy alias for the same route; `isOpus45Model` → `isIncludedOpusModel`, matching `opus-4-8…`
+strings as well as `opus-4-5…`. The path is left as it was (agent on every request) until the sweep
+decides.
+
+**H36a.** Agent-less, Opus 4.8 tool-calls as well as with the agent (it is the path the other Claude
+tones ship on), with no more turns per task. **Falsified if** it fails the rule below.
+
+**Pre-registered decision rule (fixed 05:07Z, before the sweep started).** The agent is the status quo and wins
+ties: `claude-opus-4.8` tool requests go agent-less only if, on `relay_batch` (the Opus default),
+agent-less vs agent on the premium account:
+1. solved(agent-less) ≥ solved(agent) − 1 per 30 valid tasks;
+2. turns per task not up (an increase at task-stratified permutation p < 0.05 fails);
+3. a gain, at least one of: turns per task down ≥ 10% at p < 0.05; sandbox + Disengaged + jailbreak turns
+   down by ≥ 3 per 30 tasks; solved up by ≥ 3 per 30;
+4. real pi (fix-bug + multi, 5 runs each per path): agent-less ≥ 9/10, and turns per run not up (an
+   increase at p < 0.05 fails).
+`baseline` (10 tasks per path) decides nothing; it shows whether the agent-less path has a sandbox the
+model reaches for when the framing doesn't steer it away (Sonnet 4.6's did, §30 F74).
+
+**Tool-less requests** (`modelRequiresAgent`): that rule existed only because the agent was Opus 4.5's
+sole route (F53). The probes above already falsify that for Opus 4.8, so it goes, unless the proxy's own
+tool-less turns (`proxy-verify` without `--tools`) fail agent-less.
+
+**Design.** `phase-sweep.sh`, `MODEL=claude-opus-4.8`, premium account, included scenario, 10 bench tasks
+per arm, confab retry off, paced (`M365_AVOID_THROTTLING=1`), one arm per phase, `M365_FORCE_AGENT`
+says the path. Order: relay_batch agent, agent-less; baseline agent-less, agent; relay_batch agent-less,
+agent, agent, agent-less; then real pi (relay_batch, its default) fix-bug agent, agent-less, multi
+agent-less, agent. 30 relay_batch tasks per path. No account confound this time: both paths run on the
+one account that serves the model.
+
+**Run notes.** `opus48-agent`, 05:07–07:13Z, 12 arms, 271 M365 turns, none throttled, every arm mapped
+onto its log. Services `1.0.03571.57831` … `57845`. The pacer waited from arm 6 on.
+
+### F90 — the agent stays: relay_batch ties on the bench, and agent-less costs 22% more turns in real pi 🟢
+| config (premium, Opus 4.8) | solved | turns per task | sandbox / Disengaged / jailbreak turns |
+|---|---|---|---|
+| relay_batch, agent | 30/30 | 2.53 | 0 / 0 / 0 |
+| relay_batch, agent-less | 30/30 | 2.60 (+3%, p = 0.80) | 0 / 0 / 0 |
+| real pi (relay_batch), agent | 10/10 | 3.70 per run, 23.7 s | 0 / 0 / 0 |
+| real pi (relay_batch), agent-less | 10/10 | **4.50** per run (+22%, p = 5.4·10⁻⁴), 27.2 s | 0 / 0 / 0 |
+| baseline, agent | 8/10 | 2.40 | 0 / 2 / 2 |
+| baseline, agent-less | **1/10** | 1.10 | **7** / 2 / 2 |
+
+Turns: task-stratified permutation (`analyze-arms --turns`). Agent-less fails criteria 3 (no gain of any
+kind) and 4 (pi turns up), so **H36a is falsified and `Claude_Opus` keeps the agent on tool requests**.
+In pi the extra turn is pi's `edit`: agent-less Opus 4.8 called it in all 10 runs (10 times), with the
+agent in 2 (2 times), where relay_batch otherwise fixes and re-checks in one shell call. That is the
+mirror image of Sonnet 4.6, whose extra turn with `edit` came *with* the agent (§30 F75, §34 F87).
+relay_batch holds up on Opus 4.8: 30/30 at 2.53 turns per task with the agent, close to Opus 4.5's
+2.30 (F60) and 0 Disengaged turns in 60 tasks. Turns on the included scenario carry no `metering`
+(0 of 271), as Opus 4.5's didn't (F55).
+
+### F91 — agent-less, Opus 4.8 has a code interpreter of its own, and writes its own tool results 🟢
+`baseline` agent-less solved 1 of 10: on 7 turns it ran the task in its own sandbox (`contentType:
+Code`) and then reported on files it had never touched ("`fizzbuzz.py` created and ran successfully —
+output matches…", "The working directory was empty — `config.json` did not exist. I've created it"). With
+the agent: 0 sandbox turns in 137. Under relay_batch the user-voice note keeps it out (0 of 78 agent-less
+bench turns), like Sonnet 4.6 (§30 F74). Agent-less it also writes a `<tool_response>` of its own after a
+call on 13 of 134 turns (97–1,808 chars, all cut by the stop sequence, none long enough for the early
+stop), and never with the agent (0 of 137, Fisher p = 8·10⁻⁵). Neither cost a solve here; both are
+reasons the agent is the safer path. As fingerprints, they also say the included route changed more
+than its name: Opus 4.5 never served agent-less, so neither could be seen before.
+
+### F92 — tool-less requests go agent-less now; a non-premium account gets the premium-only 502 on every path 🟢
+`modelRequiresAgent` is gone: `requestUsesAgent` attaches the agent to tool requests only, for every
+model. The premium-only 502 (`model_route_unavailable`) used to fire only for a request that carried the
+agent, so a tool-less one would have ended in "empty response" on a non-premium account. It now keys on
+the model (`isPremiumOnlyModel`), whatever the path. Live, with the new build, `proxy-verify.mjs
+--model=claude-opus-4.8` on a non-premium account (06:49–06:54Z): tool-less (agent-less), tools without
+the agent, and tools with it (the shipped path) each got `InternalError` on all 3 attempts and the
+premium-only 502. On the premium account, same build (07:18–07:19Z): tool-less answered agent-less ("4"),
+and `--agent --tools --multiturn` called the tool and used its result (PASS).
+
+**Shipped.** `claude-opus-4.8` (included scenario, agent on tool requests, `relay_batch`), with
+`claude-opus-4.5` an alias of it; `isIncludedOpusModel` matches `opus-4-8…` and `opus-4-5…` strings; no
+agent on tool-less requests; `isPremiumOnlyModel` for the 502. `M365_OPUS_FALLBACK_MODEL`'s suggested
+value is `claude-opus-4.8`. Not measured: the paid route (Opus 5.5), which was at its daily wall all
+night.
