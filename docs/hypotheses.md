@@ -5585,3 +5585,6 @@ rather than being free, so a tone that fails every time still ends at the existi
 **Open.** No controlled A/B yet: an 8-run gpt-6-sol tool bench in the same hour saw zero
 `InternalError`s (7/8, the miss was the model exploring off-task until timeout), so the rate is
 bursty. Falsifier: fresh-conversation retries failing at the same rate as same-conversation ones.
+Cost to watch: each such retry starts a conversation, which is what the F13 thread-rate throttle
+counts. Bounded to one per dropped turn, but on a bad `InternalError` day it adds up; the same
+afternoon's benching (one conversation per run) did trip `PerUserThrottled`.
