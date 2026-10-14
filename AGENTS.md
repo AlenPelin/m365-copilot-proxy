@@ -312,7 +312,11 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
   the final `type:2` item says `result.value:"Throttled"`, `errorCode:"PerUserThrottled"`, and
   the proxy now returns 429 `m365_throttled` without retrying (#35). ~190 fresh threads in a
   day tripped it on the premium account. The bench and phase-sweep stop at the first throttled
-  task, and `TASK_GAP` paces bench tasks. **A fresh login does NOT clear it:** the throttle is
+  task, and `TASK_GAP` paces bench tasks. F58's per-turn bucket fits the onsets better than any
+  thread count, and by it a busy pi session drains the account too: every turn takes one, mid-thread
+  or not. `M365_AVOID_THROTTLING=1` waits for that bucket: the bench before each task, the proxy
+  before each upstream turn, inside the open stream (§37). The model is `packages/core/src/turn-budget.ts`;
+  `scripts/bench/turn-budget.mjs` re-exports it, so tune it in one place. **A fresh login does NOT clear it:** the throttle is
   keyed on the account's `oid`, which a new token keeps (API doc §2/§7, hypotheses §11 H-R1 —
   F13's "fresh login clears it" was n=1 and confounded with a rest). It lifts with idle time,
   which is why the proxy's degradation backoff replaced the old auto-reauth. Space experiment

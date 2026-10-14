@@ -40,6 +40,8 @@ import {
   getMessageContent,
   noteRequestOutcome,
   awaitDegradationBackoff,
+  awaitTurnBudget,
+  TurnBudgetHold,
   getImageArtifactToken,
   fetchImageBytes,
   type CapturedImage,
@@ -129,6 +131,12 @@ function earlyStopAfter(): number {
   const v = Number(process.env.M365_EARLY_STOP_AFTER);
   return process.env.M365_EARLY_STOP_AFTER !== undefined && Number.isFinite(v) && v >= 0 ? v : DEFAULT_EARLY_STOP_AFTER;
 }
+
+/** The longest M365_AVOID_THROTTLING holds a request that isn't streamed: it
+ *  sends nothing until the answer, and its clients give up on headers after
+ *  5 min (pi's SDK, the bench), of which a turn itself can take ~3. A streamed
+ *  request has its keepalive chunks and waits up to M365_BUDGET_MAX_WAIT_MIN. */
+const UNSTREAMED_MAX_PACE_WAIT_MS = 2 * 60_000;
 
 type ChatBody = z.infer<typeof ChatCompletionRequest>;
 type ParsedMessage = ChatBody["messages"][number];
@@ -474,12 +482,20 @@ export async function handleChatCompletion(
         : opts.signal ? AbortSignal.any([opts.signal, earlyStop.signal]) : earlyStop.signal;
       let copilotStream;
       try {
+        // M365_AVOID_THROTTLING=1: wait until the account's turn bucket can
+        // afford this turn (turn-budget.ts, hypotheses §37). A pi session is one
+        // long thread, but every turn in it draws on the same bucket as a bench
+        // sweep (F58), so a busy enough session runs it dry and then sits out a
+        // throttle of about an hour. Every upstream turn passes here, the
+        // forcing retries included.
+        await awaitTurnBudget({ signal: opts.signal, maxWaitMs: body.stream ? undefined : UNSTREAMED_MAX_PACE_WAIT_MS });
         // Only attach the tool-calling agent when the request actually has tools.
         // The agent overrides `tone` (forces GPT-5), so tool-less requests must
         // skip it to reach the model the tone selects (e.g. Claude). See
         // ModelSession.run / docs H8.6.
         copilotStream = await session.run(text, model, signal, useToolAgent, inputImages);
       } catch (err: any) {
+        if (err instanceof TurnBudgetHold) return { error: turnBudgetHoldResponse(err) };
         return { error: jsonResponse(502, { error: { message: err.message, type: "upstream_error" } }) };
       }
 
@@ -1101,6 +1117,25 @@ function throttledResponse(result: { errorCode?: string; message?: string }): Re
       ...(result.errorCode ? { param: result.errorCode } : {}),
     },
   });
+}
+
+/** M365_AVOID_THROTTLING would have had to wait longer than this request may
+ *  (a throttle hold, usually), so the turn was never sent: sending it would only
+ *  keep the throttle alive. Whatever retries the client makes are answered here
+ *  the same way, without reaching M365. */
+function turnBudgetHoldResponse(hold: TurnBudgetHold): Response {
+  const retryAfter = Math.max(1, Math.ceil(hold.waitMs / 1000));
+  return jsonResponse(
+    429,
+    {
+      error: {
+        message: `Not sent to M365 Copilot (M365_AVOID_THROTTLING): ${hold.message}.`,
+        type: "rate_limit_error",
+        code: hold.reason === "throttle hold" ? "m365_throttle_hold" : "m365_turn_budget",
+      },
+    },
+    { "Retry-After": String(retryAfter) },
+  );
 }
 
 /** Empty upstream reply that is NOT an at-limit throttle — a distinct failure

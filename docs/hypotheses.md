@@ -93,8 +93,11 @@ than "we eyeballed one run." See §M (Methods) for the experimental rig.
   bench, agent-less costs 22% more turns in real pi (F90), and agent-less it has its own code interpreter
   and writes its own tool results (F91); tool-less requests go agent-less, and the premium-only 502
   covers every path (F92)
-
----
+- §37 — `M365_AVOID_THROTTLING` in the proxy: every upstream turn waits for the F58 bucket, so a pi
+  session's too; pi rides out a 6.7-min hold on keepalives, and a throttle hold is answered without a
+  turn (F93); with it set on the proxy alone, 144 pi turns in 40 min, 42 at the floor, no throttle (F94);
+  the bucket doesn't refill at 00:00Z like the priority-access budgets: without it, the account
+  throttled 31 turns after 00:00Z (F95)
 
 ---
 
@@ -5464,3 +5467,95 @@ and `--agent --tools --multiturn` called the tool and used its result (PASS).
 agent on tool-less requests; `isPremiumOnlyModel` for the 502. `M365_OPUS_FALLBACK_MODEL`'s suggested
 value is `claude-opus-4.8`. Not measured: the paid route (Opus 5.5), which was at its daily wall all
 night.
+
+---
+
+## 37. Oct 12 2026 — `M365_AVOID_THROTTLING` in the proxy: a pi session waits for the F58 bucket too
+
+**Change.** The F58 bucket moves from the bench into the core package (`packages/core/src/turn-budget.ts`;
+`scripts/bench/turn-budget.mjs` re-exports it). With `M365_AVOID_THROTTLING=1` the proxy calls
+`awaitTurnBudget` before every upstream turn (`runBuffered` in `handler.ts`, forcing retries included).
+The bench waits for a whole task plus the reserve; the proxy waits for one turn plus the same reserve
+(20), so a task the bench let start doesn't wait inside the proxy. A streamed request waits on its
+keepalive chunks for up to `M365_BUDGET_MAX_WAIT_MIN` (15) and an unstreamed one for up to 2 min. A
+longer wait, usually a throttle hold, is answered with a 429 (`m365_throttle_hold` /
+`m365_turn_budget`, `Retry-After`) and the turn is never sent. The proxy reads the same logs as the
+bench, incrementally (2–8 ms per turn on the premium account's config dir). It adds its own turns from
+memory when it doesn't log, and the turns it let through that haven't started yet, so two concurrent
+requests can't both take the last turn above the reserve.
+
+**Why.** By F58 every turn takes one from the bucket, mid-thread or not: the 07:56Z onset hit a turn in
+the middle of a conversation. A pi session is one thread, but its turns cost the same, and a busy pi
+session can spend 100 turns in well under an hour; then every turn fails for about an hour. The bench
+could already wait for the bucket (§25); a pi session couldn't.
+
+**What pi does with a held stream** (pi 0.78.1's source, then tested below). The OpenAI SDK's timeout
+covers only the wait for headers, which a streamed response sends at once. undici's 5-min
+`bodyTimeout` is an idle timer, reset by every chunk, so the proxy's 15 s keepalive should hold a turn
+open for as long as it likes. pi's own retry (3 tries at 2, 4 and 8 s, `Retry-After` ignored) fires
+only on messages matching `rate.?limit|429|too many requests|…`; an error chunk in a stream carries
+just its message, and the hold's message matches none of them.
+
+**Fixtures.** H37a and H37b fake the bucket's state, not M365's: a log file of fake `Chat turn` /
+`Turn result: Throttled` lines with fresh timestamps, kept outside the config dir and given only to
+the test proxy through `M365_BUDGET_LOGS`, so no other process on the account counts them. Real pi,
+fix-bug, `claude-sonnet`, a non-premium account, `M365_NO_CONFAB_RETRY=1`.
+
+### F93 — a pi turn held 6.7 min on keepalives runs normally; a throttle hold costs pi nothing upstream 🟢
+
+- **H37a (held past pi's idle timer): confirmed, n=1.** The fixture held 90 turns 5 s old, a bucket of
+  ~10, so the first turn waited 6.7 min (23:01:43 → 23:08:23Z), past pi's 5-min idle timer. pi did
+  not time out. The run solved in 4 turns, each later one held ~30 s (one turn's refill, less the ~8 s
+  the turn itself took), 520 s in all. Falsified it would have been by a pi error during the wait.
+- **H37b (throttle hold): confirmed, n=1.** With a throttled turn 5 min old in the fixture, pi's one
+  request was answered at once: "Not sent to M365 Copilot (M365_AVOID_THROTTLING): M365 throttled this
+  account at 23:13:59Z; holding new turns for ~70 more min…". No `Chat turn` reached the proxy's log,
+  pi made no retry (one `Chat completion` line), and the run ended in 0 s. pi-reliability had scored it
+  a plain FAIL, since it looked only for `PerUserThrottled|m365_throttled`, which a streamed error
+  doesn't carry. It now also matches `throttled this account`, and analyze-arms counts a held run as
+  INVALID (`Not sent to M365 Copilot`).
+
+**H37c (pre-registered before the run).** Drive pi past the bucket with `M365_AVOID_THROTTLING` set
+on the proxy only: pi-reliability without the variable, no cooldown, 50 fix-bug runs, ~200 turns, on a non-premium account
+whose bucket starts full. Prediction: the proxy lets turns straight through until its count reaches
+the reserve (at pi's ~4 turns a minute the bucket refills meanwhile, so after ~130 turns, ~35 min),
+then waits ~30 s a turn for the rest (~70 turns), its count bottoms out at the reserve (~20), and the
+account never throttles. **Falsified
+by** any `Turn result: Throttled` in the run: the model is more than 20 turns optimistic for pi's
+traffic, or the proxy lets through turns it shouldn't. Without the variable, F58 puts the onset where
+the count reaches 0, ~100 turns in.
+
+**H37d — does the bucket refill at 00:00Z, the way the priority-access budgets reset? (pre-registered
+23:30Z).** The model refills continuously and never resets. The logs on record can't tell: replayed both
+ways (M0 continuous; M1 also refilled to full at 00:00Z), every onset on the three accounts gets the
+same level, because each had a quiet stretch before 00:00Z. Only one 00:00Z on record found the bucket
+low (premium, 2026-10-08: M0 31, then 97 turns in the hour), and M0 didn't run dry there either. Probe:
+H37c holds a non-premium account at the reserve (~20) across 00:00Z. At 00:00:30Z, stop it, restart
+the proxy without `M365_AVOID_THROTTLING`, and send short turns back to back in one conversation until
+the first throttle.
+**M0 predicts** a throttle after ~20–25 turns; **M1 predicts** none until ~110. A throttle in that
+range also shows H37c really ran at the floor. No throttle by ~130 would mean the bucket was bigger
+than either says.
+
+### F94 — with `M365_AVOID_THROTTLING` on the proxy alone, 144 pi turns in 40 min, 42 of them at the floor, and no throttle 🟢 (H37c)
+The run started 23:21Z on a full bucket and was stopped after run 40 at 00:01Z for H37d. All 40 runs
+solved (fix-bug, `claude-sonnet`), in 144 turns. pi ran faster than predicted, ~7.3 turns a minute,
+so the proxy's count reached the reserve after 102 turns (23:35:49Z, 14 min), not ~130. From there
+the proxy waited before every turn: 42 waits, mean 29.6 s, max 33 s, 20.8 min in all. That held the
+account at 1.64 turns a minute (the refill is 1.6), and the model's level bottomed at 20.2. No turn came
+back throttled and no request was held. Without the variable, F58 puts the onset ~20 turns past 23:35Z.
+
+### F95 — the bucket doesn't refill at 00:00Z: the account throttled 31 turns after it, where the continuous model said empty 🟢 (H37d, n=1)
+At 00:01:52Z the proxy's count stood at 20.7, after F94's run. The proxy was restarted without
+`M365_AVOID_THROTTLING`, and a probe sent
+short `claude-sonnet` turns back to back, ~4 s each. 28 turns were logged before the throttled one.
+26 of them were in one conversation, from 25 requests: the last request was cut off when the probe was
+restarted, and the proxy logged a second turn for it on its reconnect path. The other 2 were in a fresh
+conversation 50 s later. The 29th, sent at 00:04:38.7Z, came back `Throttled (PerUserThrottled)` at
+00:05:20Z, 41 s after it was sent.
+At that onset M0 stood at −2.9. M1, the bucket
+refilled to full at 00:00Z, stood at 76.4, since 31 turns had been sent since 00:00Z. So the turn
+budget carries over 00:00Z; only the priority-access budgets reset there. It also shows F94's account
+really sat at the reserve: without the variable, it ran dry in under 3 min. One account, one 00:00Z: a reset at
+some other hour isn't excluded. Replayed through M0, the 12 onsets in the three accounts' logs stand at
+−9 to +31, and this one at −2.9 sits among them.
