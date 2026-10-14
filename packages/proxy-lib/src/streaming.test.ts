@@ -595,10 +595,13 @@ describe("GPT-6 Sol: agent on premium, learned fallback on non-premium (#23)", (
     scripted.queue = [DEAD, CALL];
     const res = await send();
     expect(res.status).toBe(200);
-    // No fresh conversation, no agent-less switch: the ordinary empty-reply retry.
-    expect(scripted.newConversations).toBe(0);
+    // No agent-less switch: the ordinary InternalError retry, which re-sends the
+    // whole request in a fresh conversation — the dropped turn processed nothing,
+    // so "Please continue." would lose the request.
+    expect(scripted.newConversations).toBe(1);
     expect(scripted.agentFlags).toEqual([true, true]);
-    expect(scripted.texts[1]).toBe("Please continue.");
+    expect(scripted.texts[1]).not.toBe("Please continue.");
+    expect(scripted.texts[1]).toBe(scripted.texts[0].replace("conv-test<", "conv-test-2<"));
     scripted.queue = [CALL];
     await send();
     expect(scripted.agentFlags).toEqual([true]);
@@ -608,7 +611,8 @@ describe("GPT-6 Sol: agent on premium, learned fallback on non-premium (#23)", (
     scripted.queue = [DEAD, CALL];
     const res = await send("gpt-5.5-think-deeper");
     expect(res.status).toBe(200);
-    expect(scripted.newConversations).toBe(0);
+    // The fresh-conversation InternalError retry, still with the agent.
+    expect(scripted.newConversations).toBe(1);
     expect(scripted.agentFlags[1]).toBe(true);
   });
 
@@ -616,7 +620,8 @@ describe("GPT-6 Sol: agent on premium, learned fallback on non-premium (#23)", (
     process.env.M365_FORCE_AGENT = "1";
     scripted.queue = [DEAD, CALL];
     await send();
-    expect(scripted.newConversations).toBe(0);
+    // The fresh-conversation InternalError retry, still with the agent.
+    expect(scripted.newConversations).toBe(1);
     expect(scripted.agentFlags).toEqual([true, true]);
   });
 });

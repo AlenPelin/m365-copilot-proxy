@@ -456,6 +456,7 @@ export async function handleChatCompletion(
     let disengageRetried = false;
     let agentFallbackDone = false;
     let priorityFallbackDone = false;
+    let internalErrorFreshRetried = false;
     let originalText = text;
     // Self-imposed pacing while the account is degraded (thread-rate throttle). A
     // no-op when healthy; during backoff it sleeps a jittered delay so we stop
@@ -666,6 +667,33 @@ export async function handleChatCompletion(
             },
           }),
         };
+      }
+
+      // A content-less `InternalError` is a turn M365 dropped, and the
+      // conversation it happened in tends to stay dropped: "Please continue."
+      // into it came back `InternalError` again in 9 of 18 retries, against
+      // 28 of 89 turns overall (Gpt_6_Sol_Reasoning on a non-premium account,
+      // T3 Code driving Claude Code, 2026-10-14). The turn processed nothing,
+      // so a "continue" has nothing to continue from either: re-send the
+      // WHOLE request once in a fresh conversation instead. Not a free retry: it
+      // spends an attempt, so a tone that fails every time still ends at the
+      // premium-only / empty-response handling below. A premium-only model's
+      // InternalError is deterministic (§24), so it skips straight there.
+      if (
+        !internalErrorFreshRetried &&
+        copilotStream.result?.value === "InternalError" &&
+        !copilotStream.hasContent && fullText.length === 0 &&
+        !isPremiumOnlyModel(model) &&
+        attempt < MAX_RETRIES
+      ) {
+        internalErrorFreshRetried = true;
+        session.newConversation();
+        text = formatMessages(body.messages, body.tools, body.tool_choice, session.conversationId, framingVariant);
+        inputImages = imageUrls(body.messages);
+        originalText = text;
+        log.info(`Upstream InternalError — re-sending the whole request in a fresh conversation (attempt ${attempt + 1}/${MAX_RETRIES})`);
+        await new Promise(r => setTimeout(r, SHORT_RETRY_DELAY_MS));
+        continue;
       }
 
       // Empty response. Only an at-limit throttle warrants treating this as rate

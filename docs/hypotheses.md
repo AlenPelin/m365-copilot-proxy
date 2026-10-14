@@ -5559,3 +5559,29 @@ budget carries over 00:00Z; only the priority-access budgets reset there. It als
 really sat at the reserve: without the variable, it ran dry in under 3 min. One account, one 00:00Z: a reset at
 some other hour isn't excluded. Replayed through M0, the 12 onsets in the three accounts' logs stand at
 −9 to +31, and this one at −2.9 sits among them.
+
+## 38. Oct 14 2026 — a content-less `InternalError` drops the turn; "Please continue." loses the request
+
+Seen driving the proxy from T3 Code (Claude Code via cli-proxy-api), `Gpt_6_Sol_Reasoning`, on a
+non-premium account (`claude-sonnet-5.5` → `ForbiddenRequest (InvalidCopilotLicense)`).
+
+### F96 — the empty-reply retry re-sent nothing the dropped turn carried 🟡
+
+**Observed.** 28 of 89 turns that day ended `Turn result: InternalError` with no content. The
+ordinary empty-reply path then sent "Please continue." into the same conversation; that came back
+`InternalError` again in 9 of 18 retries (vs 28/89 overall). The 9 that answered can be worse
+than failing: one T3 session's delta carried a test run's output, the turn dropped, and the
+"continued" answer was "From what you've shown, everything is green so far" — written from the
+earlier context, never having seen the results.
+
+**Reading.** Same wire state as the dead agent route (§23): the turn processed nothing, so there
+is nothing to continue. The agent-fallback path already re-sends the whole request in a fresh
+conversation for exactly that reason; the generic path didn't.
+
+**Change.** On a content-less `InternalError` (not a premium-only model, whose `InternalError` is
+deterministic, §24), re-send the whole request once in a fresh conversation. It spends an attempt
+rather than being free, so a tone that fails every time still ends at the existing give-up.
+
+**Open.** No controlled A/B yet: an 8-run gpt-6-sol tool bench in the same hour saw zero
+`InternalError`s (7/8, the miss was the model exploring off-task until timeout), so the rate is
+bursty. Falsifier: fresh-conversation retries failing at the same rate as same-conversation ones.
