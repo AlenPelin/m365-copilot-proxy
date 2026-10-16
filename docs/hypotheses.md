@@ -5015,6 +5015,19 @@ referred to an earlier run (5 of 30 before). 7 of the 17 passes were rescued by 
 (F80/F81), so the give-up reflex is still there; the retry is carrying it. The 3 failures: one
 mid-task give-up after 2 tool calls, two turn-1 refusals.
 
+**The key needs the tool names too (#83, Oct 16).** opencode 2.0.30 opens a session with two requests
+4 ms apart that share the first user message: a title request ("You are a title generator…", no tools)
+and the task (12 tools). Keyed on the opener alone, both resolved to one `ConversationState` and ran in one
+M365 conversation at the same time, the title prompt as turn 0 and the task as turn 1 (2 of 3 opencode
+sessions; in the third the pair shared the state too, but each request rotated it to a fresh conversation
+because the session switched model, the task's while the title turn was still running). A fake OpenAI server showed that neither pi (4 tools) nor opencode's task thread changes its
+tool names or system prompt between turns, so the key is now the opener plus the sorted tool names. Names,
+not definitions, because a description can carry per-turn text; the system prompt was left out for the
+same reason. A session that changes its tool set starts a fresh conversation with the full history: one
+more thread, but no wrong answer. **Live** (opencode, `claude-sonnet-5`, premium account): the title request
+went into its own conversation and the task into another, and the task's 3 follow-up turns went into
+the task's conversation in delta mode.
+
 ---
 
 ## 32. Oct 4 2026 — one conversation, two backends: turns forked until `X-RoutingParameter-SessionKey` pinned them

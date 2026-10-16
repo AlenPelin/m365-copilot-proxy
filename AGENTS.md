@@ -291,6 +291,10 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
 - **A turn can hold several bot messages; assemble text per message.** Each new message's head
   arrives only as a snapshot with a `cursor`; folding everything into one string drops it (it ate
   a fence's backticks). `TurnTextComposer` in `session.ts` — don't "simplify" it away. #29.
+- **A conversation is keyed on the first user message *and* the tool names** (`SessionPool.fingerprint`).
+  opencode's title request shares the task's opener but has no tools; keyed on the opener alone it ran in
+  the task's M365 conversation, concurrently (#83). Don't add the system prompt or tool descriptions to
+  the key: those are where a harness puts per-turn text, and every change starts a new thread.
 - **A tool turn is stopped once the model's own `<tool_response>` after a call runs past 2,000 chars**
   (#65, `runBuffered` in `handler.ts`): waiting for M365 to finish let invented continuations run for
   minutes, past pi's timeout. Not at the tag itself: M365 keeps the whole message, Sonnet 4.6 seems to
