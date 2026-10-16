@@ -307,6 +307,10 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
   an empty `edits:`, which used to arrive as `edits: []` — 44 of its 47 pi `edit` calls, each a wasted
   round trip (#50). `parseYamlBlockValue` in `fenced.ts` reads the YAML subset models write; keep both
   paths. The bench can't catch a regression here (no array-typed tools), so test with real pi's `edit`.
+  Multi-line *strings* have a shape of their own: in a tool whose params are all header lines (no
+  body, no edit pair; opencode's `edit` with `oldString`/`newString`) the model writes `oldString: <first
+  line>` and the rest of the text below it, so a string value runs on to the next `key:` line (#82). A
+  tool with a body still ends its header at the first line that isn't `key:`; don't extend the run-on to it.
 - **Account degradation is THREAD-rate, not message-count** (docs/hypotheses.md §9 F13).
   Microsoft throttles *conversations started*, not messages sent — the per-conversation
   counter resets each thread. A bench that opens one fresh conversation per task burns the

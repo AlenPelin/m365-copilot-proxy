@@ -4205,6 +4205,18 @@ delta turns' `name="unknown"` label). **Fixed** (PR #51): real pi, relay, 10/10,
 10 edits YAML and all parsed, none rejected — 5.20 turns per run vs relay's 7.16 here (12:19–12:33Z,
 account P). That is a bigger saving than batching's, and the two should stack; not yet measured together.
 
+**Side finding — opencode's `edit` loses multi-line strings (#82).** opencode's `edit` takes `path`,
+`oldString`, `newString`, `replaceAll`: no body param, and camelCase names that aren't in `SEARCH_KEYS`, so
+all four are header lines (`oldString: <oldString>`). Sonnet 5 fills that in with the text as it is in the
+file, its later lines at the code's own indentation. The parser read one line per value and ended the
+header at the first non-`key:` line, so the call reached opencode as `{"path", "oldString": "<first
+line>"}`, with no `newString` (2 of 2 opencode sessions on Oct 16, 2 or 3 wasted turns each). **Fixed:** in a
+header-only tool a string value runs on to the next `key:` line, blank lines included, trailing ones
+dropped; `key: |` reads as a block scalar. Before relying on that, the dumps were checked for stray lines
+in header-only fences, which the run-on would now glue onto a value: 47 of 47 pi `read` fences had none.
+Live (opencode 2.0.30, `claude-sonnet-5`, premium account): a four-line `oldString` written in exactly
+that shape arrived whole and the edit applied on the first try.
+
 ### F63 — real pi on the premium account: GPT-6 batches cleanly, Sonnet 5 doesn't save turns → the decision 🟢
 Paced runs (`M365_AVOID_THROTTLING=1`), 11:00–11:56Z, confab retry off, no throttled or Disengaged run.
 
