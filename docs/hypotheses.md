@@ -5730,3 +5730,31 @@ only when that found nothing either.
 other 3 are the dropped calls, now read; no whole reply flagged as unreadable. Scripted-model pi run:
 the unclosed call was asked for again and ran. **Not covered:** no live A/B of the re-ask, and no
 Claude replies in the corpus.
+
+## 41. Oct 29 2026 — give-ups, a doubled "<", tool-result labels, file chips (port of upstream PRs #70, #78)
+
+Credit: upstream PR #70 and PR #78 (NecmiKural; GPT-5.6 Think Deeper through pi on Windows).
+Evidence is upstream's, from its pi transcripts and debug logs; summary here.
+
+### F98 — five small fixes, ported 🟢
+- **Give-ups (PR #78, PR #70).** First-person "I can't generate / produce / export / create /
+  make files, documents, PDFs", "I can't … in the current session / this chat", "no … tool is
+  enabled", "tools aren't enabled in this chat", "I wasn't able to complete … in this run" went to
+  the user with no forcing retry. Upstream: over 334 distinct no-tool replies, 1 new hit (the
+  give-up), none lost; over 198, 4 new hits, 0 false positives. Third-person forms stay answers.
+- **Doubled head (PR #70).** A message that opens with `<` streams the snapshot `<` and then a
+  first delta `<document…`; appended, the reply began `<<document>`. 9 of 1,061 cursor frames, all
+  `<`. Only a lone `<` head is replaced; `*`/`` ` `` heads are continuations (bold, fences).
+- **Tool-result labels (PR #70).** A file edit labelled `command="todo.mjs"`, and quotes swapped
+  (`"$f"` → `'$f'`), read to GPT-5.6 as "an unexpected label"; a label cut silently at 100 chars
+  (`command="… margin: 22m"`) was read as the command cut there, and the model gave up. Labels now
+  say `command` / `path` (incl. `file_path`) / `query` / `input`, escape quotes, and end a cut in `…`.
+- **File chips (PR #70).** `<File>name</File>` (and `<document>`, `<Files>`, `< File>`) in 58 of
+  245 final pi answers. Merged into the existing `stripM365Markup`, which now runs on the OpenAI
+  path's tool-mode text replies too, and leaves fenced and inline code alone.
+
+**Not ported:** the Turkish give-ups (this repo already has its own Turkish set), the resend of an
+unrecorded empty turn (reverted upstream), the gpt-5.6-think-deeper `relay_batch` default, running
+an over-cap shell command from a script, and per-session buckets for a shared first message (this
+repo keys sessions on the first message plus tool names, #83).
+**Not covered:** no live A/B here; only unit tests.
