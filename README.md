@@ -281,6 +281,17 @@ starts from the turn count the conversation had (`initialTurnCount`), so the res
 marked as a new conversation's start, and the count doesn't drop to 0. If the turn that failed was
 the first, the resend is still the start (idea from Bertogim 48fbe71).
 
+**A turn that comes back empty** (`runBuffered` in `handler.ts`) is handled in this order: a
+`Throttled` result is a 429 with no retry; a priority-access `OutOfCredits` is a 429 or the fallback
+model; `Disengaged` on a tool request is re-sent once with the `softened` framing in a fresh
+conversation; a content-less `InternalError` is re-sent once as the whole request in a fresh
+conversation (hypotheses §38). Any other empty reply gets up to two quick retries, 2 s apart, that
+send the same prompt the turn sent: the new messages (tool output, a user message), the full
+request, or the re-ask. Before, they sent "Please continue.", which carried nothing of the turn,
+and the model then answered from older context without the tool output it was sent (§38 F96; idea
+from Bertogim e78a5c3). An empty reply with the conversation's message cap reached is a rate-limit
+error; after the last retry, a 502.
+
 ### Assembling a turn's text
 
 One M365 turn can hold several bot messages. `TurnTextComposer` (`core/src/session.ts`) keeps

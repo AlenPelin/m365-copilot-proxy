@@ -1184,3 +1184,57 @@ describe("session pool idle TTL (idea from retsimx 1d859d4, d84c9a7)", () => {
     expect(pool.size).toBe(1);
   });
 });
+
+// The quick retry after an empty reply sent "Please continue.", which carries
+// nothing of the turn: a dropped delta's tool output was never seen, and the
+// "continued" answer was written from older context (hyp §38 F96). It now sends
+// the turn's own prompt again (idea from Bertogim e78a5c3).
+describe("the empty-reply retry resends the turn's prompt", () => {
+  const tools = [{ type: "function", function: { name: "bash", parameters: { type: "object", properties: { command: { type: "string" } } } } }];
+  async function ask(pool: InstanceType<typeof SessionPool>, messages: any[]) {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = handleChatCompletion(ChatCompletionRequest.parse({ model: "m365-copilot", stream: false, tools, messages }), pool);
+      await vi.runAllTimersAsync();
+      return (await (await pending).json()).choices[0].message;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it("resends a follow-up turn's tool result, not \"Please continue.\"", async () => {
+    scripted.result = null;
+    scripted.texts = [];
+    scripted.queue = [{ fullText: "```bash\nnpm test\n```" }, { fullText: "" }, { fullText: "All 12 tests pass." }];
+    const pool = new SessionPool();
+    const messages: any[] = [{ role: "user", content: `run the tests ${Math.random()}` }];
+    const m1 = await ask(pool, messages);
+    messages.push({ role: "assistant", content: null, tool_calls: m1.tool_calls });
+    messages.push({ role: "tool", tool_call_id: m1.tool_calls[0].id, content: "TEST_OUTPUT: 12 passed" });
+    const m2 = await ask(pool, messages);
+    expect(m2.content).toBe("All 12 tests pass.");
+    expect(scripted.texts).toHaveLength(3);
+    expect(scripted.texts[1]).toContain("TEST_OUTPUT: 12 passed");
+    expect(scripted.texts[2]).toBe(scripted.texts[1]);
+    expect(scripted.texts).not.toContain("Please continue.");
+    scripted.queue = [];
+  });
+
+  it("after the fresh-conversation InternalError resend, an empty reply resends the whole request again", async () => {
+    scripted.result = null;
+    scripted.texts = [];
+    scripted.newConversations = 0;
+    scripted.queue = [
+      { fullText: "", result: { value: "InternalError" } },
+      { fullText: "", result: { value: "InternalError" } },
+      { fullText: "```bash\nls\n```" },
+    ];
+    const m = await ask(new SessionPool(), [{ role: "user", content: `FIRST_TASK ${Math.random()}` }]);
+    expect(JSON.parse(m.tool_calls[0].function.arguments).command).toBe("ls");
+    expect(scripted.newConversations).toBe(1); // the InternalError resend, once
+    expect(scripted.texts).toHaveLength(3);
+    expect(scripted.texts[2]).toBe(scripted.texts[1]);
+    expect(scripted.texts[2]).toContain("FIRST_TASK");
+    scripted.queue = [];
+  });
+});

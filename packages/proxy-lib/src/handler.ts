@@ -710,7 +710,13 @@ export async function handleChatCompletion(
       if (attempt < MAX_RETRIES) {
         log.info(`Empty upstream response, quick retry in ${SHORT_RETRY_DELAY_MS / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})`);
         await new Promise(r => setTimeout(r, SHORT_RETRY_DELAY_MS));
-        text = "Please continue."; // M365 already has context
+        // `text` stays this turn's own prompt (the delta, the full request, or a
+        // re-ask), so it goes out again as it was. An empty turn may not have
+        // taken the request in: "Please continue." carried nothing of it, and
+        // the model then answered from older context, never having seen the
+        // tool output it was sent (hypotheses §38 F96; idea from Bertogim e78a5c3).
+        // After the InternalError resend above, that is the full request in
+        // the fresh conversation, which has nothing to continue from either.
       } else {
         // A model served only on a premium account, on a non-premium one (Opus
         // 4.8: BotConnection, `InternalError`, every time — §24, §36). Not a throttle, so it doesn't feed the degradation
