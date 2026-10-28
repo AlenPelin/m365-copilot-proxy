@@ -219,6 +219,19 @@ function applyStopSequences(text: string, seqs: string[] | undefined): { text: s
   return cut < 0 ? { text, hit: null } : { text: text.slice(0, cut), hit };
 }
 
+/**
+ * Remove M365 web-UI markup the model leaks into prose: citation markers
+ * (`\uE200cite\uE202<ref>\uE201`, shown as "citeturn0file1") and `<File>name</File>`
+ * file chips (kept as the bare name). Text blocks only — tool inputs are left as is,
+ * since a command or file body may legitimately contain `<File>` (e.g. WiX XML).
+ */
+export function stripM365Markup(text: string): string {
+  return text
+    .replace(/\uE200[^\uE201]*\uE201/g, "")
+    .replace(/<File>([^<\n]*)<\/File>/g, "$1")
+    .replace(/[ \t]+$/gm, "");
+}
+
 /** Translate one finished OpenAI chat response into an Anthropic message. */
 export function fromOpenAIChatResponse(payload: any, requestedModel: string, stopSequences?: string[]): AnthropicMessageResponse {
   const choice = payload?.choices?.[0] ?? {};
@@ -227,7 +240,7 @@ export function fromOpenAIChatResponse(payload: any, requestedModel: string, sto
   let stopHit: string | null = null;
 
   if (typeof message.content === "string" && message.content.trim()) {
-    const { text, hit } = applyStopSequences(message.content, stopSequences);
+    const { text, hit } = applyStopSequences(stripM365Markup(message.content), stopSequences);
     stopHit = hit;
     if (text) content.push({ type: "text", text });
   }

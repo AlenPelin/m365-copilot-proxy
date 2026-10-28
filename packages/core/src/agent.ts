@@ -309,6 +309,12 @@ async function publishBot(
  * and retires the old one. Returns the agent ID to pass to CopilotSession (as
  * `agentId`), or null if agent creation isn't possible.
  */
+// Set when the tenant refused to publish the agent with a 403 (e.g. "Publishing
+// this agent requires Copilot extensibility, which is not enabled for your
+// account"). A permission refusal won't change by trying again, so later sessions
+// in this process skip agent creation instead of churning bots in the tenant.
+let agentRefused: string | null = null;
+
 export async function getOrCreateAgent(
   opts: { forceRefresh?: boolean } = {},
 ): Promise<string | null> {
@@ -324,6 +330,10 @@ export async function getOrCreateAgent(
   if (!opts.forceRefresh && cached && cached.instructionsHash === wantHash) {
     log.info(`Using cached agent: ${cached.agentId} (instructions ${wantHash})`);
     return cached.agentId;
+  }
+  if (agentRefused && !opts.forceRefresh) {
+    log.info(`Agent unavailable (publish refused earlier: ${agentRefused}) — running without it`);
+    return null;
   }
   if (cached) {
     log.info(
@@ -370,6 +380,12 @@ export async function getOrCreateAgent(
     try {
       titleId = await publishBot(envUrl, ppToken, botId);
     } catch (pubErr: any) {
+      // 403 = the tenant won't let this account publish agents at all. Recreating the
+      // bot can't fix that; it only deletes and creates bots in the tenant each time.
+      if (/\b403\b/.test(pubErr.message)) {
+        agentRefused = pubErr.message.match(/"Message":\s*"([^"]+)"/)?.[1] ?? "HTTP 403";
+        throw pubErr;
+      }
       // If publish fails (e.g. missing icon/instructions on legacy bot), delete and recreate
       log.info(
         `Publish failed (${pubErr.message.slice(0, 100)}), deleting and recreating bot...`,

@@ -17,6 +17,7 @@ const {
   anthropicSseText,
   fromOpenAIChatResponse,
   resolveM365Model,
+  stripM365Markup,
   toOpenAIChatRequest,
 } = await import("./anthropic.js");
 const { createApp } = await import("./index.js");
@@ -197,5 +198,22 @@ describe("createApp /v1/messages", () => {
     const oai = await (await app.fetch(new Request("http://localhost/v1/models"))).json() as any;
     expect(oai.object).toBe("list");
     expect(oai.data[0].id.startsWith("claude-m365--")).toBe(false);
+  });
+});
+
+describe("stripM365Markup", () => {
+  const [S, M, E] = [0xe200, 0xe202, 0xe201].map((c) => String.fromCharCode(c));
+  it("drops citation markers and unwraps <File> chips", () => {
+    expect(stripM365Markup(`Read <File>App.sln</File> fine. cite${M}turn0file1${E}`.replace("cite", `${S}cite`)))
+      .toBe("Read App.sln fine.");
+    expect(stripM365Markup("no markup here")).toBe("no markup here");
+  });
+  it("is applied to text blocks but not to tool inputs", () => {
+    const m = fromOpenAIChatResponse({ choices: [{ finish_reason: "tool_calls", message: {
+      content: `see <File>a.txt</File>${S}cite${M}x${E}`,
+      tool_calls: [{ id: "c", function: { name: "Write", arguments: JSON.stringify({ content: "<File>keep</File>" }) } }],
+    } }] }, "x");
+    expect(m.content[0]).toEqual({ type: "text", text: "see a.txt" });
+    expect((m.content[1] as any).input).toEqual({ content: "<File>keep</File>" });
   });
 });

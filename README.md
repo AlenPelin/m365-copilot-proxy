@@ -264,15 +264,14 @@ are removed, and `NO_PROXY` is set to `127.0.0.1,localhost,::1` only, so the M36
 is reached directly and nothing else is exempt. Then:
 
 - **A connection to a blocked host is refused before any DNS lookup or TCP connect**
-  (`403`), so nothing is sent. On that **first** attempt the guard kills Claude Code
-  and its child processes (Windows `taskkill /T /F`; elsewhere `pkill -P`, `SIGKILL`,
-  then `stty sane`), prints
-  `[claude-guard] BLOCKED a connection to <host> — stopped Claude Code. Nothing was sent.`
-  and exits with code **99**.
+  (`403`), so nothing is sent. Every attempt is refused; Claude Code keeps running and
+  just sees a failed request. Nothing is printed during the session (it would garble
+  Claude Code's screen). When Claude Code exits, the guard prints
+  `[claude-guard] blocked connection attempts (nothing was sent): <host> (<n>x), …`.
 - Every other host is passed through (CONNECT tunnel or plain-HTTP forward), so tools the
   agent runs from Bash (npm, git, curl — they inherit the proxy variables) keep working.
-  A Bash `curl https://api.anthropic.com` trips the guard too.
-- Otherwise the guard exits with Claude Code's exit code. Ctrl+C goes to Claude Code.
+  A Bash `curl https://api.anthropic.com` is refused too.
+- The guard exits with Claude Code's exit code. Ctrl+C goes to Claude Code.
 
 | Env | Default | Meaning |
 |---|---|---|
@@ -281,8 +280,8 @@ is reached directly and nothing else is exempt. Then:
 | `CLAUDE_GUARD_LOG` | unset | file that gets one line per connection: `START`, `ALLOW host:port`, `BLOCKED host:port` |
 
 Tested on Windows with Node 16 and 24: in a normal launcher run nothing was blocked and the
-reply came through; Claude Code aimed at the real API was stopped within a second at
-`api.anthropic.com:443`. Limit: it relies on programs honouring the proxy variables
+reply came through; Claude Code aimed at the real API had every attempt at
+`api.anthropic.com:443` refused. Limit: it relies on programs honouring the proxy variables
 (Claude Code and common CLI tools do). A program that ignores them would bypass the
 guard; only an OS firewall rule can stop that.
 Any other Anthropic client works too: point it at `http://127.0.0.1:4141` (no `/v1`).
@@ -305,7 +304,11 @@ retries, throttling) applies unchanged:
   stripped). Any other name — Claude Code's own `claude-sonnet-4-5-…`, `claude-haiku-…` —
   goes to `M365_CLAUDE_CODE_MODEL` if that is a proxy model, else the chat default
   (`gpt-5.5-think-deeper`). The response's `model` echoes the requested name.
-- **Response.** Text and tool calls become `text` and `tool_use` blocks. `finish_reason`
+- **Response.** Text and tool calls become `text` and `tool_use` blocks. Text blocks are
+  cleaned of M365 web-UI markup (`stripM365Markup`): citation markers
+  (`U+E200 cite U+E202 <ref> U+E201`, which show up as "citeturn0file1") are removed and
+  `<File>name</File>` chips become the bare name. Tool inputs are not touched (a file body
+  may legitimately contain `<File>`). `finish_reason`
   `tool_calls` → `stop_reason: "tool_use"`, `length` → `max_tokens`, else `end_turn`;
   `stop_sequences` are applied to the text (→ `stop_sequence`). `usage` carries
   `input_tokens`/`output_tokens` plus the proxy's `x_m365_*` diagnostics.
@@ -327,6 +330,22 @@ retries, throttling) applies unchanged:
 
 Claude Code prints a one-line warning that it doesn't recognise the model name and
 assumes a 200k-token context window. It is harmless; M365 accepts more.
+
+**On a basic (non-premium) M365 Copilot account** (seen 2026-10-28):
+- Use `MODEL=gpt-6.1-sol`. It works on every account and made real tool calls from Claude
+  Code. `gpt-5.5-think-deeper` tended to answer from M365's own `/mnt/data` sandbox
+  ("the files are not mounted here"), and `claude-sonnet` never answered at all; our
+  guess is the tenant hasn't enabled Anthropic models.
+- Publishing the Copilot Studio agent fails with 403 *"Publishing this agent requires
+  Copilot extensibility, which is not enabled for your account"*. The proxy then runs
+  without the agent, using the agent-less framing. It remembers the refusal for the rest
+  of the process instead of deleting and recreating the bot in your tenant for every
+  conversation (`agentRefused` in `core/src/agent.ts`). Set `M365_FORCE_AGENT=0` when
+  starting the proxy to skip even the first attempt.
+- Without the agent, the framing tells the model that *the user* runs each command it
+  writes and pastes the output back. The proxy turns those commands into real tool calls,
+  so it works, but asked about itself the model will say "you executed it on your
+  machine". That is expected. Give it tasks, not questions about its abilities.
 
 Limits: M365 tool calling is prompt-emulated, so it is less reliable than real Claude;
 this is wire compatibility, not an Anthropic model. Ported from the
@@ -718,7 +737,7 @@ which shows the check works. Interactive mode was not covered by that test. Tool
 fetch the web on their own (WebFetch, WebSearch) are left out of the launcher's default
 `--tools`. If you enable them, they reach the sites they're asked to fetch, and Claude
 Code may contact Anthropic to check a domain's safety. Either way, the launcher's
-**egress guard** (below) refuses any Anthropic host and stops Claude Code on the first try.
+**egress guard** (below) refuses every connection to an Anthropic host.
 
 **Policy note:** the proxy presents itself as Microsoft's own web client (client ID,
 headers, a login that avoids bot detection). It sends data only to Microsoft, but your organisation may still treat
