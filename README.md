@@ -195,6 +195,25 @@ the launcher already defaulted to running without it. Model notes below that com
 <https://copilotstudio.microsoft.com>, pick your default environment, open **Agents**,
 and delete any `m365-tool-agent-*`.
 
+### M365 markup in answers
+
+The models write markup that only M365's web client renders. `stripM365Markup`
+(`proxy-lib/src/markup.ts`) cleans a text answer of it, on the OpenAI path for every text reply
+to a tool request (`handler.ts`; the tool-less path streams deltas live and is passed through as
+M365 wrote it) and on the Anthropic path for every text block:
+
+- Citation markers (`U+E200 cite U+E202 <ref> U+E201`, shown as "citeturn0file1") are removed
+  everywhere (private-use characters, never real content).
+- File chips become the bare file name: `<File>notlar.docx</File>` → `notlar.docx`. Tag names
+  `file`, `files`, `document`, any case, spaces allowed inside the brackets (`< File>`); the name
+  is 1–200 chars with no `<`, `>` or newline, and the closing tag must match. A lone `<stdio.h>`
+  is not touched. Upstream PR #70 counted `<File>` in 58 of 245 distinct final pi answers.
+- Fenced code blocks and inline code (`` `<File>a.txt</File>` ``) are left as they are.
+- Outside code, spaces at line ends (left by a removed marker) are trimmed.
+
+Tool-call inputs are never cleaned: a command or file body may legitimately contain `<File>`
+(WiX XML).
+
 ### Conversation reuse
 
 Each agent session reuses the same M365 conversation (same `sessionId` + `conversationId`). The WebSocket reconnects per turn but M365 maintains server-side context. This saves quota — the 600 message limit applies per-conversation.
@@ -396,7 +415,7 @@ The launcher (`scripts/claude-local.sh`, Windows twin `scripts/claude-local.ps1`
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL` | `$MODEL` (default `gpt-6.1-sol`) | every model slot, background haiku calls included, goes to one proxy model |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` | no telemetry/update traffic to Anthropic |
 | `CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL` | `1` | Claude Code does not download Anthropic's plugin marketplace (`github.com/anthropics/claude-plugins-official`, ~23 MB) into `.claude-local`. The guard can't block that by itself: it only sees the host, `github.com`, which the agent's own `git` needs |
-| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `60000` (keeps yours if set) | Claude Code summarises old turns at 60k tokens instead of the 200k it assumes for an unknown model. M365 keeps only about the last 85–90k tokens of a conversation in view: GPT-6.1 Sol lost a planted rule, facts and its tool instructions past that (`docs/hypotheses.md` §39). After a compaction the proxy starts a fresh M365 conversation with the short history |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` + `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | `100000` + `60` (keeps yours if set) | Claude Code summarises old turns at 60k tokens (60% of a 100k window) instead of the 200k it assumes for an unknown model. Claude Code raises any window under 100k to 100k and warns, so the window alone can't go lower; it compacts at `min(window × pct%, window − 13k)`, which is 87k without the percent. M365 keeps only about the last 85–90k tokens of a conversation in view: GPT-6.1 Sol lost a planted rule, facts and its tool instructions past that (`docs/hypotheses.md` §39). After a compaction the proxy starts a fresh M365 conversation with the short history |
 | `--settings` | `scripts/claude-local.settings.json`: `bashOutputMaxChars: 128000` | Bash output up to 128k characters goes to the model inline (Claude Code's maximum; default 30k). Past that, Claude Code saves it to a file and sends only a 2 KB preview, and M365 models answered that by retrying near-identical commands in a loop (seen: 14 turns, `find`/`sed` walking .NET `bin/` and `obj/`). A file, not inline JSON, because PowerShell 5.1 mangles quotes in native-command arguments |
 | `--tools` | `$TOOLS` (default `Bash,Read,Edit,Write,Glob,Grep`; `TOOLS=` for all) | Claude Code's full tool set is large, and big tool schemas make M365 `Disengage` |
 
@@ -451,10 +470,9 @@ retries, throttling) applies unchanged:
   goes to `M365_CLAUDE_CODE_MODEL` if that is a proxy model, else the chat default
   (`gpt-6.1-sol`). The response's `model` echoes the requested name.
 - **Response.** Text and tool calls become `text` and `tool_use` blocks. Text blocks are
-  cleaned of M365 web-UI markup (`stripM365Markup`): citation markers
-  (`U+E200 cite U+E202 <ref> U+E201`, which show up as "citeturn0file1") are removed and
-  `<File>name</File>` chips become the bare name. Tool inputs are not touched (a file body
-  may legitimately contain `<File>`). A one-line code block with no language or `text`/`txt`/`plaintext`
+  cleaned of M365 web-UI markup (`stripM365Markup`, see
+  [M365 markup in answers](#m365-markup-in-answers); the OpenAI path already did it for tool
+  requests, and it is idempotent). A one-line code block with no language or `text`/`txt`/`plaintext`
   (GPT models write "around:", ```` ```text line 111``` ````, "for …") becomes inline code,
   joined into the sentence when it follows "…:" and the next line starts lowercase
   (`inlineTinyCodeBlocks`); blocks with a language or several lines are kept. A `tool_result` that Claude Code cut to a preview

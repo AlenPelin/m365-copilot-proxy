@@ -45,6 +45,7 @@ import {
   type ParseResult,
 } from "@m365-copilot/core";
 import { ChatCompletionRequest } from "./schemas.js";
+import { stripM365Markup } from "./markup.js";
 import type { z } from "zod/v4";
 
 const log = createLogger("handler");
@@ -850,7 +851,7 @@ export async function handleChatCompletion(
           replyText = fullText;
         }
         log.info("Reply tool detected, converting to text response");
-        return { kind: "text", text: replyText };
+        return { kind: "text", text: stripM365Markup(replyText) };
       }
 
       if (realToolCalls.length > 0) {
@@ -886,7 +887,10 @@ export async function handleChatCompletion(
       conv.pendingNote = notes.length ? notes.join("\n") : null;
       return { kind: "tools", toolCalls: parsed.toolCalls };
     }
-    return { kind: "text", text: fullText };
+    // Tool mode is buffered, so the answer is cleaned before it is sent: M365's
+    // file chips and citation markers (markup.ts; upstream PR #70). The tool-less
+    // path streams deltas live and is returned as M365 wrote it.
+    return { kind: "text", text: stripM365Markup(fullText) };
   } else {
     // No tools — stream deltas live (onDelta) while buffering for the retry logic.
     const result = await runBuffered(onDelta);

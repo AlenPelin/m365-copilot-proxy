@@ -209,6 +209,13 @@ describe("stripM365Markup", () => {
       .toBe("Read App.sln fine.");
     expect(stripM365Markup("no markup here")).toBe("no markup here");
   });
+  it("unwraps every file-chip spelling, but leaves code and a bare <name.h> alone (upstream PR #70)", () => {
+    expect(stripM365Markup("<document>a.docx</document>, <Files>b.md</Files>, <FILE>c.txt</FILE>, < File>d.pdf</File>"))
+      .toBe("a.docx, b.md, c.txt, d.pdf");
+    expect(stripM365Markup("Tag: `<File>a.txt</File>` and\n```xml\n<File>keep.xml</File>  \n```"))
+      .toBe("Tag: `<File>a.txt</File>` and\n```xml\n<File>keep.xml</File>  \n```");
+    expect(stripM365Markup("Add #include <stdio.h> first.")).toBe("Add #include <stdio.h> first.");
+  });
   it("is applied to text blocks but not to tool inputs", () => {
     const m = fromOpenAIChatResponse({ choices: [{ finish_reason: "tool_calls", message: {
       content: `see <File>a.txt</File>${S}cite${M}x${E}`,

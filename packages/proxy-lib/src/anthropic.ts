@@ -8,6 +8,9 @@ import { z } from "zod/v4";
 import { getAvailableModels } from "@m365-copilot/core";
 import { ChatCompletionRequest } from "./schemas.js";
 import { handleChatCompletion, type SessionPool } from "./handler.js";
+import { stripM365Markup } from "./markup.js";
+
+export { stripM365Markup };
 
 // Blocks are checked per type in the translation below, so the schema stays loose:
 // Claude Code adds fields (cache_control, citations, …) that we just ignore.
@@ -228,19 +231,6 @@ function applyStopSequences(text: string, seqs: string[] | undefined): { text: s
     if (i >= 0 && (cut < 0 || i < cut)) { cut = i; hit = s; }
   }
   return cut < 0 ? { text, hit: null } : { text: text.slice(0, cut), hit };
-}
-
-/**
- * Remove M365 web-UI markup the model leaks into prose: citation markers
- * (`\uE200cite\uE202<ref>\uE201`, shown as "citeturn0file1") and `<File>name</File>`
- * file chips (kept as the bare name). Text blocks only — tool inputs are left as is,
- * since a command or file body may legitimately contain `<File>` (e.g. WiX XML).
- */
-export function stripM365Markup(text: string): string {
-  return text
-    .replace(/\uE200[^\uE201]*\uE201/g, "")
-    .replace(/<File>([^<\n]*)<\/File>/g, "$1")
-    .replace(/[ \t]+$/gm, "");
 }
 
 /**

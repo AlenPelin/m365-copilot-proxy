@@ -646,6 +646,19 @@ describe("follow-up turns and give-ups (Windows / pi, measured)", () => {
     expect(m.content).toContain("If you can't access the API");
     scripted.queue = [];
   });
+
+  // Upstream PR #70: the GPT models write M365's file-chip markup into answers.
+  it("returns M365's file markup as the bare file name, outside code", async () => {
+    scripted.result = null;
+    scripted.queue = [{ fullText: "<File>notlar.docx</File> oluşturuldu; < File>ozet.md</File> da hazır. Etiket: `<File>a.txt</File>`.\n\n```xml\n<File>keep.xml</File>\n```" }];
+    const m = await ask([
+      { role: "user", content: `docx ${Math.random()}` },
+      { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "bash", arguments: '{"command":"ls"}' } }] },
+      { role: "tool", tool_call_id: "c1", content: "notlar.md" },
+    ], new SessionPool());
+    expect(m.content).toBe("notlar.docx oluşturuldu; ozet.md da hazır. Etiket: `<File>a.txt</File>`.\n\n```xml\n<File>keep.xml</File>\n```");
+    scripted.queue = [];
+  });
 });
 
 describe("a new harness session that shares the first user message", () => {
