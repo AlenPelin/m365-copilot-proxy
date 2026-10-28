@@ -42,7 +42,7 @@ separate OpenAI or Anthropic bill.
 6. **Pick a model** with `$env:MODEL = "gpt-6.1-sol"` (see [Available models](#available-models)). What you
    can use depends on your Copilot licence: some models need a premium seat, and some have
    daily or weekly quotas.
-
+     
 Expect it to be slower than a real API (10–30 s per reply on the thinking models), and keep
 the agent's tool set small: big tool lists make M365 refuse to answer (`Disengaged`).
 
@@ -187,6 +187,17 @@ and delete any `m365-tool-agent-*`.
 ### Conversation reuse
 
 Each agent session reuses the same M365 conversation (same `sessionId` + `conversationId`). The WebSocket reconnects per turn but M365 maintains server-side context. This saves quota — the 600 message limit applies per-conversation.
+
+### Assembling a turn's text
+
+One M365 turn can hold several bot messages. `TurnTextComposer` (`core/src/session.ts`) keeps
+text per message: a `cursor` frame names the message that the following token deltas extend, a
+full-text snapshot replaces (folds into) its message's text, and the turn's text is the
+non-empty messages joined by a blank line. One special case (upstream PR #70): when a message
+opens with `<`, M365 sends the head snapshot `<` and then a first delta that starts with `<` again
+(`<document`), because it holds the `<` back until it knows the tag. That first delta replaces the
+`<` instead of being appended, so the reply doesn't start `<<document>`. Only a lone `<` head
+counts: `*` + `*Summary**` or `` ` `` + ` ``bash` are continuations and are appended.
 
 ## Packages
 
