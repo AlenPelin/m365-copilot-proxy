@@ -41,7 +41,10 @@ export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 CLAUDE_CODE_DISABLE_OFFICIAL_M
 # Compact (summarise old turns) at 60k tokens instead of the assumed 200k: M365 keeps
 # only ~85-90k tokens of a conversation in view (docs/hypotheses.md §39). After a
 # compaction the proxy starts a fresh M365 conversation with the short history.
-export CLAUDE_CODE_AUTO_COMPACT_WINDOW="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-60000}"
+# Claude Code raises a window under 100k to 100k, so use the 100k window and compact
+# at 60% of it.
+export CLAUDE_CODE_AUTO_COMPACT_WINDOW="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-100000}"
+export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-60}"
 
 # Bash output up to 128k chars inline (Claude Code's max; default 30k). Past that it
 # hands the model only a 2KB preview, which M365 models answer by retrying in a loop.
