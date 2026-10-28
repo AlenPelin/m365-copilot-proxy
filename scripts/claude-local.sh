@@ -9,6 +9,9 @@
 #   TOOLS= pnpm run claude               # all of Claude Code's tools (see below)
 #   pnpm run claude -- -p "write hi"     # pass a prompt / extra flags through
 #
+# Runs under scripts/claude-guard.mjs: any attempt to reach an Anthropic host is
+# refused and stops Claude Code at once (exit 99). CLAUDE_GUARD=0 turns it off.
+#
 # Start the proxy first in another shell:  pnpm run proxy   (defaults to :4141)
 set -euo pipefail
 
@@ -38,4 +41,9 @@ export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 args=(--model "$MODEL")
 [[ -n "$TOOLS" ]] && args+=("--tools=$TOOLS")
 echo "[claude-local] proxy=$ANTHROPIC_BASE_URL  model=$MODEL  tools=${TOOLS:-all}  config=$CLAUDE_CONFIG_DIR"
-exec claude "${args[@]}" "$@"
+# Egress guard: Anthropic hosts are refused and the first attempt kills Claude Code
+# (scripts/claude-guard.mjs). CLAUDE_GUARD=0 runs claude without it.
+if [[ "${CLAUDE_GUARD:-1}" == "0" ]]; then
+  exec claude "${args[@]}" "$@"
+fi
+exec node "$ROOT/scripts/claude-guard.mjs" claude "${args[@]}" "$@"

@@ -6,7 +6,8 @@
 #   .\scripts\claude-local.ps1 -p "write hi"
 #
 # Env: PORT (4141), MODEL (gpt-5.5-think-deeper), TOOLS (Bash,Read,Edit,Write,Glob,Grep;
-# set to "" for all tools), M365_PROXY_API_KEY (if the proxy has one).
+# set to "" for all tools), M365_PROXY_API_KEY (if the proxy has one),
+# CLAUDE_GUARD ("0" disables the Anthropic egress guard, scripts/claude-guard.mjs).
 $port  = if ($env:PORT)  { $env:PORT }  else { "4141" }
 $model = if ($env:MODEL) { $env:MODEL } else { "gpt-5.5-think-deeper" }
 $tools = if ($null -ne $env:TOOLS) { $env:TOOLS } else { "Bash,Read,Edit,Write,Glob,Grep" }
@@ -28,5 +29,8 @@ $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 $claudeArgs = @("--model", $model)
 if ($tools) { $claudeArgs += "--tools=$tools" }
 Write-Host "[claude-local] proxy=$($env:ANTHROPIC_BASE_URL)  model=$model  tools=$(if ($tools) { $tools } else { 'all' })  config=$($env:CLAUDE_CONFIG_DIR)"
-& claude @claudeArgs @args
+# Egress guard: Anthropic hosts are refused and the first attempt kills Claude Code
+# (scripts/claude-guard.mjs). $env:CLAUDE_GUARD = "0" runs claude without it.
+if ($env:CLAUDE_GUARD -eq "0") { & claude @claudeArgs @args }
+else { & node (Join-Path $PSScriptRoot "claude-guard.mjs") claude @claudeArgs @args }
 exit $LASTEXITCODE

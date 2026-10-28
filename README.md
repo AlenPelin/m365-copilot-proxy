@@ -252,6 +252,36 @@ The launcher (`scripts/claude-local.sh`, Windows twin `scripts/claude-local.ps1`
 | `--tools` | `$TOOLS` (default `Bash,Read,Edit,Write,Glob,Grep`; `TOOLS=` for all) | Claude Code's full tool set is large, and big tool schemas make M365 `Disengage` |
 
 It unsets `ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`.
+
+**Egress guard** (`scripts/claude-guard.mjs`, on by default; `CLAUDE_GUARD=0` turns it
+off). The launcher runs `claude` as `node scripts/claude-guard.mjs claude …`. The guard
+starts a local HTTP(S) proxy on a random `127.0.0.1` port and runs Claude Code with
+`HTTPS_PROXY`/`HTTP_PROXY` (both cases) pointing at it. Any inherited proxy variables
+are removed, and `NO_PROXY` is set to `127.0.0.1,localhost,::1` only, so the M365 proxy
+is reached directly and nothing else is exempt. Then:
+
+- **A connection to a blocked host is refused before any DNS lookup or TCP connect**
+  (`403`), so nothing is sent. On that **first** attempt the guard kills Claude Code
+  and its child processes (Windows `taskkill /T /F`; elsewhere `pkill -P`, `SIGKILL`,
+  then `stty sane`), prints
+  `[claude-guard] BLOCKED a connection to <host> — stopped Claude Code. Nothing was sent.`
+  and exits with code **99**.
+- Every other host is passed through (CONNECT tunnel or plain-HTTP forward), so tools the
+  agent runs from Bash (npm, git, curl — they inherit the proxy variables) keep working.
+  A Bash `curl https://api.anthropic.com` trips the guard too.
+- Otherwise the guard exits with Claude Code's exit code. Ctrl+C goes to Claude Code.
+
+| Env | Default | Meaning |
+|---|---|---|
+| `CLAUDE_GUARD` | `1` | `0` runs `claude` without the guard |
+| `CLAUDE_GUARD_BLOCK` | `anthropic.com,claude.ai,claude.com` | comma-separated domains; each also blocks its subdomains (`api.anthropic.com`), not lookalikes (`notanthropic.com`) |
+| `CLAUDE_GUARD_LOG` | unset | file that gets one line per connection: `START`, `ALLOW host:port`, `BLOCKED host:port` |
+
+Tested on Windows with Node 16 and 24: in a normal launcher run nothing was blocked and the
+reply came through; Claude Code aimed at the real API was stopped within a second at
+`api.anthropic.com:443`. Limit: it relies on programs honouring the proxy variables
+(Claude Code and common CLI tools do). A program that ignores them would bypass the
+guard; only an OS firewall rule can stop that.
 Any other Anthropic client works too: point it at `http://127.0.0.1:4141` (no `/v1`).
 
 **How the endpoint works** (`packages/proxy-lib/src/anthropic.ts`). It is a translation
@@ -684,7 +714,8 @@ other than to the proxy. A control run without the launcher tried `api.anthropic
 which shows the check works. Interactive mode was not covered by that test. Tools that
 fetch the web on their own (WebFetch, WebSearch) are left out of the launcher's default
 `--tools`. If you enable them, they reach the sites they're asked to fetch, and Claude
-Code may contact Anthropic to check a domain's safety.
+Code may contact Anthropic to check a domain's safety. Either way, the launcher's
+**egress guard** (below) refuses any Anthropic host and stops Claude Code on the first try.
 
 **Policy note:** the proxy presents itself as Microsoft's own web client (client ID,
 headers, a login that avoids bot detection). It sends data only to Microsoft, but your organisation may still treat
