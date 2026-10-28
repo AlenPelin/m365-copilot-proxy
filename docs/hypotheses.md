@@ -5670,8 +5670,28 @@ F9's ≥500k). What fails is recall of the conversation's start across turns: af
 ~25 KB (~85–90k tokens cumulative) the early messages — including the tool framing — are gone.
 The proxy depends on that memory, since follow-up turns send only new messages.
 
-**Proposed action.** Re-anchor: when the delta sent since the last full prompt passes a threshold
+**Follow-up (same day): re-anchoring tested and dropped.** The proxy resent the full history in
+a fresh M365 conversation once the delta since the last full prompt passed a limit.
+- **C**, limit 60k tokens: never fired (9 × ~25 KB = ~225k chars < 240k); recall failed at
+  turn 10 as in A. So the start was gone after ~56k tokens of delta on top of the ~32k first turn.
+- **D**, limit 40k tokens: fired at turn 8 (full resend of ~78k tokens, logged), yet turn 10
+  dropped the rule and turn 11 lost both facts (answered "OpenClaw").
+
+**Revised conclusion (🟡).** What matters is the conversation's total size: M365 keeps roughly
+the last ~85–90k tokens of a conversation in view, whether they arrived in one request or over
+turns (B's ~97k single request answered its own turn, the in-request question). Re-anchoring
+cannot help in principle: everything already sent is part of the client's history, so a full
+resend is never smaller. The lever is a smaller history: Claude Code's auto-compaction. When
+it compacts, the history shrinks and the proxy starts a fresh M365 conversation with it
+("not a continuation" / new opener).
+
+**Action (shipped).** `scripts/claude-local.*` set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=60000`
+(Claude Code assumes 200k for an unknown model). **Falsifier / open:** a real Claude Code
+session past 60k tokens should compact and keep the tool framing; untested live. Turn count vs
+token total as the trigger is still not separated.
+
+~~**Proposed action (superseded).** Re-anchor: when the delta sent since the last full prompt passes a threshold
 (e.g. ~60k tokens), start a fresh M365 conversation and resend the full history (the B shape).
 Cost: one new conversation per re-anchor (F13's thread-rate throttle counts those).
 **Falsifier:** run A again with the threshold on; recall should hold at turn 11+. Also untested:
-whether the turn count or the token total is what triggers the loss (A grew both together).
+whether the turn count or the token total is what triggers the loss (A grew both together).~~

@@ -7,7 +7,7 @@ import { readFileSync, readdirSync, statSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [repo, out, model = "gpt-6.1-sol"] = process.argv.slice(2);
-const URL_ = "http://127.0.0.1:4141/v1/chat/completions";
+const URL_ = `http://127.0.0.1:${process.env.PORT || 4141}/v1/chat/completions`;
 const log = (s) => { appendFileSync(out, s + "\n"); console.log(s); };
 
 // Benign, varied filler: this repo's own TypeScript source (like real tool output).
@@ -26,7 +26,7 @@ let cursor = 0;
 const chunk = (n) => { const s = src.slice(cursor, cursor + n); cursor = (cursor + n) % (src.length - n); return s; };
 
 const RULE = "House rule for this whole session: end EVERY reply with the exact token ZEBRA-17 on its own line.";
-const FACT = "Remember this for later: the project codename is BLUE-HERON-482.";
+const FACT = (process.env.RUN_TAG ? process.env.RUN_TAG + ". " : "") + "Remember this for later: the project codename is BLUE-HERON-482.";
 const MID = "Side note to remember: the staging database port is 6413.";
 
 const messages = [{ role: "system", content: RULE }, { role: "user", content: FACT }, { role: "assistant", content: "Noted.\nZEBRA-17" }];

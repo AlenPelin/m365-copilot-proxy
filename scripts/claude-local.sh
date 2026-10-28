@@ -38,6 +38,10 @@ export ANTHROPIC_MODEL="$MODEL" ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL" ANTHROPIC_
 # No telemetry/update/error-report traffic to Anthropic from this session, and no
 # automatic download of Anthropic's plugin marketplace (github.com/anthropics/...).
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1
+# Compact (summarise old turns) at 60k tokens instead of the assumed 200k: M365 keeps
+# only ~85-90k tokens of a conversation in view (docs/hypotheses.md §39). After a
+# compaction the proxy starts a fresh M365 conversation with the short history.
+export CLAUDE_CODE_AUTO_COMPACT_WINDOW="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-60000}"
 
 # Bash output up to 128k chars inline (Claude Code's max; default 30k). Past that it
 # hands the model only a 2KB preview, which M365 models answer by retrying in a loop.

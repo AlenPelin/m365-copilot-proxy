@@ -27,6 +27,9 @@ foreach ($v in "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEF
 $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 # No automatic download of Anthropic's plugin marketplace (github.com/anthropics/...).
 $env:CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1"
+# Compact (summarise old turns) at 60k tokens instead of the assumed 200k: M365 keeps
+# only ~85-90k tokens of a conversation in view (docs/hypotheses.md §39).
+if (-not $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW) { $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "60000" }
 
 # Bash output up to 128k chars inline (Claude Code's max; default 30k). Past that it
 # hands the model only a 2KB preview, which M365 models answer by retrying in a loop.
