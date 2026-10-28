@@ -5758,3 +5758,31 @@ unrecorded empty turn (reverted upstream), the gpt-5.6-think-deeper `relay_batch
 an over-cap shell command from a script, and per-session buckets for a shared first message (this
 repo keys sessions on the first message plus tool names, #83).
 **Not covered:** no live A/B here; only unit tests.
+
+## 42. Oct 29 2026 — tool arguments: schema types, fail closed, a bare inner fence, path spellings (ports from forks)
+Credit: ghostinator (def9700), asmartin-ai (9679487), retsimx / Lewis Lakerink (2c16c22, f529c3c).
+Evidence is the forks'; summary here.
+
+### F99 — four parser fixes in `fenced.ts`, ported 🟢
+- **Schema types (ghostinator def9700).** A non-string body param (a tool whose one param is a
+  boolean, number, array or object) is coerced like a header value, and an `object` header is
+  read as JSON. A cut-off JSON array/object (`edits: [{"oldText":"a",`) drops the call instead of
+  shipping the broken string; the fence then counts as unreadable and the model is asked again.
+- **Fail closed on YAML (asmartin-ai 9679487).** `- {oldText: "a", newText: "b"}` parsed as a
+  mapping keyed `{oldText`, which passed pi's required-param check. A plain YAML key can't start
+  with `{` / `[` now, a non-JSON `[..]` / `{..}` is unreadable, and an unreadable YAML block drops
+  the call instead of becoming `[]`.
+- **Bare inner fence (idea of retsimx 2c16c22, redone for PR #71's `scanFences`).** In a
+  write/edit block a bare ``` that has another bare ``` after it (before the next tool call or
+  result tag) opens a code block of the file. A README with a plain code block was written cut off.
+- **Path spellings (idea of retsimx f529c3c).** `path` / `filePath` / `file_path` map onto the
+  one the tool declares. The rest of f529c3c (tools-block names derived from schemas, wider alias
+  families) was not ported.
+
+**Not ported:** ghostinator's `session.ts` change (take the streamed head from the adaptive-card
+text the cursor names). Checked on the local debug log: of 228 cursor frames, 65 had `m.text`
+differ from the card text, and all 65 were the `<` head that §41 F98 already handles (card `""`,
+then delta `<block…`). No other head was seen doubled, so on main it isn't a live bug.
+Also not ported: asmartin-ai's chatgpt-web half, ghostinator's docs and probe scripts.
+**Not covered:** no live A/B; unit tests only. Risk of the bare-fence rule: prose plus a
+bare-fenced block written after a write call end up in the file.
