@@ -471,6 +471,7 @@ export function isProseDocument(parsed: ParseResult, text?: string, tools?: Tool
   if (text !== undefined && tools && tools.length > 0) {
     const first = findFirstToolFence(text, buildSpecMap(tools));
     if (first && !looksLikeDocumentPreamble(text.slice(0, first.start))) return false;
+    if (first && asksUserToRun(text.slice(0, first.start), text)) return false;
   }
   const prose = parsed.textContent ? parsed.textContent.trim() : "";
   // Distinguish a coding-agent ACTION turn from a written DOCUMENT.
@@ -483,6 +484,19 @@ export function isProseDocument(parsed: ParseResult, text?: string, tools?: Tool
   // Flag only documents. (Old heuristic was prose≥120, which ate Claude's preambles.)
   const hasMarkdownHeaders = /^#{1,6}\s/m.test(prose);
   return parsed.toolCalls.length >= 4 || hasMarkdownHeaders || prose.length >= 300;
+}
+
+/** The agent-less framing tells the model the USER runs each block and pastes the
+ *  output back, so the model answers "Please run: ```bash …``` … and paste the
+ *  output". That is a request to run, the opposite of a document, even when a long
+ *  "I can't run it myself" intro precedes it (seen with Claude Code: 2 dotnet test
+ *  blocks returned as text). Needs: no markdown heading, the last line before the
+ *  first fence asks to run, and the reply asks for the output or gives up. */
+function asksUserToRun(preamble: string, text: string): boolean {
+  if (/^#{1,6}\s/m.test(preamble)) return false;
+  const lastLine = preamble.trimEnd().split("\n").at(-1) ?? "";
+  if (!/\b(?:run|execute)\b[^\n]{0,60}:\s*$/i.test(lastLine)) return false;
+  return /\b(?:paste|send|share|give)\b[^.\n]{0,40}\boutput\b/i.test(text) || looksLikeConfabulation(preamble);
 }
 
 /** Is the text before a reply's first tool call the opening of a written

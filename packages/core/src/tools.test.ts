@@ -687,3 +687,22 @@ describe("looksLikeConfabulation — Claude Code phrasings", () => {
     expect(looksLikeConfabulation("All 153 tests passed and the build is green.")).toBe(false);
   });
 });
+
+describe("isProseDocument — 'please run … paste the output' is an action", () => {
+  const tools = [{
+    type: "function" as const,
+    function: { name: "Bash", description: "Executes a bash command", parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } },
+  }];
+  const B = "```";
+  it("executes the reply seen live (long can't-run intro, 2 blocks, asks for output)", () => {
+    const text = `I can't run the tests for your repository from here.\n\nIn this conversation you've explicitly asked me to work through **your terminal only**, and I don't have access to your local \`D:\contoso-webapp-api\` workspace. The only test outputs I've seen are the ones you pasted.\n\nPlease run:\n\n${B}bash\ndotnet test a.csproj --no-restore -v minimal\n${B}\n\nand then:\n\n${B}bash\ndotnet test b.csproj --no-restore -v minimal\n${B}\n\nPaste the output and I'll fix the failures until both projects are green.`;
+    const parsed = parseToolCalls(text, tools);
+    expect(parsed.hasToolCalls).toBe(true);
+    expect(isProseDocument(parsed, text, tools)).toBe(false);
+  });
+  it("still treats a headed README with example commands as a document", () => {
+    const text = `# Setup guide\n\nThis guide explains how to install and use the project on a new machine, step by step, with all the details you might need when something goes wrong later on.\n\nTo install, run:\n\n${B}bash\nnpm install\n${B}\n\nThen start it:\n\n${B}bash\nnpm start\n${B}\n\nPaste the output into an issue if it fails.`;
+    const parsed = parseToolCalls(text, tools);
+    expect(isProseDocument(parsed, text, tools)).toBe(true);
+  });
+});

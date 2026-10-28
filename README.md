@@ -358,6 +358,14 @@ assumes a 200k-token context window. It is harmless; M365 accepts more.
   message ends with a one-line reminder that tool blocks still work. The "gave up" detector
   (`looksLikeConfabulation`) also catches "can't *actually* run …" and "no … tool is
   available", and then retries once.
+- **"Please run: ```bash …``` … paste the output" is executed** (`asksUserToRun` in
+  `core/src/tools.ts`). The prose-document guard (don't execute the example commands in
+  a README the model writes) used to swallow this reply when a long "I can't run it
+  myself" intro came first. Now, if there is no markdown heading, the line before the
+  first block asks to run (ends in `run …:`), and the reply asks for the output or gives
+  up, the first block runs as a tool call.
+- After an empty reply the proxy re-resolves the agent; with a remembered 403 it no longer
+  tries publishing again.
 
 Limits: M365 tool calling is prompt-emulated, so it is less reliable than real Claude;
 this is wire compatibility, not an Anthropic model. Ported from the

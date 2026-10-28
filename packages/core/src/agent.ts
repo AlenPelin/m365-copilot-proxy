@@ -331,7 +331,8 @@ export async function getOrCreateAgent(
     log.info(`Using cached agent: ${cached.agentId} (instructions ${wantHash})`);
     return cached.agentId;
   }
-  if (agentRefused && !opts.forceRefresh) {
+  // Also on forceRefresh: a permission refusal survives a re-resolve after an empty reply.
+  if (agentRefused) {
     log.info(`Agent unavailable (publish refused earlier: ${agentRefused}) — running without it`);
     return null;
   }
