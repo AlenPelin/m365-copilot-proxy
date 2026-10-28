@@ -5,9 +5,9 @@
 //
 // Starts a local HTTP(S) proxy, runs <command> with HTTPS_PROXY/HTTP_PROXY pointing
 // at it (NO_PROXY only for localhost, so the M365 proxy is reached directly), and:
-//   - refuses any connection to a blocked host (Anthropic by default) — no DNS
-//     lookup, no TCP connection, nothing leaves the machine — and on that FIRST
-//     attempt kills <command> (whole process tree) and exits with code 99;
+//   - refuses every connection to a blocked host (Anthropic by default) — no DNS
+//     lookup, no TCP connection, nothing leaves the machine. <command> keeps
+//     running; when it exits, the guard lists the blocked hosts on stderr;
 //   - passes every other host through, so tools the agent runs (npm, git, curl
 //     from Bash — they inherit the proxy env) still work.
 //
@@ -21,7 +21,7 @@
 // stops that.
 import http from "node:http";
 import net from "node:net";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
 const BLOCK = (process.env.CLAUDE_GUARD_BLOCK ?? "anthropic.com,claude.ai,claude.com")
@@ -43,41 +43,23 @@ function log(kind, target) {
   try { appendFileSync(LOG, `${new Date().toISOString()} ${kind} ${target}\n`); } catch {}
 }
 
-let child = null;
-let tripped = false;
+// host → number of refused attempts, reported when <command> exits.
+const blocked = new Map();
 
-function killTree() {
-  if (!child || child.exitCode !== null) return;
-  if (process.platform === "win32") {
-    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-  } else {
-    // Not detached (a detached child loses the terminal), so kill its children
-    // (e.g. a running Bash tool) first, then it. Then undo the TUI's raw mode.
-    spawnSync("pkill", ["-KILL", "-P", String(child.pid)], { stdio: "ignore" });
-    try { child.kill("SIGKILL"); } catch {}
-    spawnSync("stty", ["sane"], { stdio: "inherit" });
-  }
-}
-
-function trip(host) {
-  if (tripped) return;
-  tripped = true;
-  // stderr, after the TUI dies: say what happened.
-  setTimeout(() => {
-    process.stderr.write(`\n[claude-guard] BLOCKED a connection to ${host} — stopped Claude Code. Nothing was sent.\n`);
-  }, 50);
-  killTree();
-  setTimeout(() => process.exit(99), 300);
+function block(host, target) {
+  log("BLOCKED", target);
+  blocked.set(host, (blocked.get(host) ?? 0) + 1);
 }
 
 const server = http.createServer((req, res) => {
+  req.on("error", () => {});
+  res.on("error", () => {});
   // Plain-HTTP proxy request: absolute URL in req.url.
   let url;
   try { url = new URL(req.url); } catch { res.writeHead(400).end(); return; }
   if (isBlocked(url.hostname)) {
-    log("BLOCKED", url.host);
+    block(url.hostname, url.host);
     res.writeHead(403).end("blocked by claude-guard");
-    trip(url.hostname);
     return;
   }
   log("ALLOW", url.host);
@@ -89,13 +71,18 @@ const server = http.createServer((req, res) => {
   req.pipe(up);
 });
 
+// A client dropping a refused/finished connection (ECONNRESET) must not crash the
+// guard: with no 'error' listener Node throws, the guard dies and the child loses
+// its network.
+server.on("clientError", (_err, socket) => socket.destroy());
+
 server.on("connect", (req, socket, head) => {
+  socket.on("error", () => {});
   // HTTPS: "CONNECT host:port". Decide on the hostname before any lookup.
   const [host, port = "443"] = String(req.url).replace(/^\[|\](?=:)/g, "").split(/:(?=\d+$)/);
   if (isBlocked(host)) {
-    log("BLOCKED", req.url);
+    block(host, req.url);
     socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
-    trip(host);
     return;
   }
   log("ALLOW", req.url);
@@ -106,7 +93,7 @@ server.on("connect", (req, socket, head) => {
     socket.pipe(up);
   });
   up.on("error", () => socket.destroy());
-  socket.on("error", () => up.destroy());
+  socket.on("close", () => up.destroy());
 });
 
 server.listen(0, "127.0.0.1", () => {
@@ -120,11 +107,15 @@ server.listen(0, "127.0.0.1", () => {
     NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1",
   });
   log("START", `${proxy} block=${BLOCK.join(",")}`);
-  child = spawn(cmd, args, { stdio: "inherit", env });
+  const child = spawn(cmd, args, { stdio: "inherit", env });
   child.on("error", (e) => { console.error(`[claude-guard] cannot start ${cmd}: ${e.message}`); process.exit(127); });
   child.on("exit", (code, signal) => {
-    if (tripped) return; // trip() exits with 99
     server.close();
+    // After the TUI is gone, so it can't garble the screen.
+    if (blocked.size) {
+      const list = [...blocked].map(([h, n]) => `${h} (${n}x)`).join(", ");
+      process.stderr.write(`[claude-guard] blocked connection attempts (nothing was sent): ${list}\n`);
+    }
     process.exit(code ?? (signal ? 1 : 0));
   });
 });

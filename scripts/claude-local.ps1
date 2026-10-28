@@ -29,7 +29,7 @@ $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 $claudeArgs = @("--model", $model)
 if ($tools) { $claudeArgs += "--tools=$tools" }
 Write-Host "[claude-local] proxy=$($env:ANTHROPIC_BASE_URL)  model=$model  tools=$(if ($tools) { $tools } else { 'all' })  config=$($env:CLAUDE_CONFIG_DIR)"
-# Egress guard: Anthropic hosts are refused and the first attempt kills Claude Code
+# Egress guard: Anthropic hosts are refused (nothing is sent); Claude Code keeps running
 # (scripts/claude-guard.mjs). $env:CLAUDE_GUARD = "0" runs claude without it.
 if ($env:CLAUDE_GUARD -eq "0") { & claude @claudeArgs @args }
 else { & node (Join-Path $PSScriptRoot "claude-guard.mjs") claude @claudeArgs @args }
