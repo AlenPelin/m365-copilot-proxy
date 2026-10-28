@@ -173,6 +173,14 @@ it scored 0/5 on real agentic tasks; see [hypotheses §9](docs/hypotheses.md)):
   the whole call. The fence then counts as unreadable and the model is asked again (next item),
   instead of the harness getting a value of the wrong shape that passes its required-param
   check (port of ghostinator def9700).
+- **Other spellings of the file-path param** (`headerKey` / `declaredPathParam` in `fenced.ts`):
+  a header line keyed `path`, `filePath` or `file_path` (any case) sets the path param the tool
+  actually declares, when the tool declares exactly one of the three; with two or more declared
+  nothing is mapped. An aliased line is taken only while that param is still unset, so a
+  `filePath:` line inside a header-only edit's multi-line text stays text. A tool whose only
+  param is the path (shown as the body) also reads a one-line labelled body, `filePath: src/a.ts`,
+  as the path `src/a.ts`. Before, an undeclared `filePath:` line ended the header: a write got
+  no path and that line as the file's first line (idea from retsimx f529c3c).
 - **Array/object params as a YAML block** (`parseYamlBlockValue` in `fenced.ts`, #50): under an
   empty `edits:` line the model may write an indented YAML list or mapping (Sonnet 4.6's habit
   in pi). The subset read: sequences (dashes indented or at the key's column), mappings, double-

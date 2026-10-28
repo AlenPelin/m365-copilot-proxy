@@ -81,6 +81,45 @@ const editFile: ToolDef = {
 const ALL = [bash, readFile, writeFile, editFile];
 const specs = buildSpecMap(ALL);
 
+// Idea from retsimx f529c3c: the model writes the path param in the spelling it
+// knows, not the one the tool declares.
+describe("other spellings of the file-path param", () => {
+  const tool = (name: string, properties: Record<string, unknown>): ToolDef =>
+    ({ type: "function", function: { name, parameters: { type: "object", properties } } });
+  const argsOf = (text: string, t: ToolDef) => {
+    const { calls } = parseFencedToolCalls(text, buildSpecMap([t]));
+    expect(calls).toHaveLength(1);
+    return JSON.parse(calls[0].function.arguments);
+  };
+
+  it.each(["filePath", "file_path", "FilePath"])("maps a write's %s header onto its declared path", (key) => {
+    const write = tool("write", { path: { type: "string" }, content: { type: "string" } });
+    expect(argsOf(`\`\`\`write\n${key}: a.txt\n\nhello\n\`\`\``, write)).toEqual({ path: "a.txt", content: "hello" });
+  });
+
+  it("maps `path` onto a declared file_path (Claude Code's spelling)", () => {
+    const write = tool("Write", { file_path: { type: "string" }, content: { type: "string" } });
+    expect(argsOf("```Write\npath: a.txt\n\nhello\n```", write)).toEqual({ file_path: "a.txt", content: "hello" });
+  });
+
+  it("reads a labelled path in a single-path read's body", () => {
+    const read = tool("read", { path: { type: "string" } });
+    expect(argsOf("```read\nfilePath: src/a.ts\n```", read)).toEqual({ path: "src/a.ts" });
+    expect(argsOf("```read\nsrc/a.ts\n```", read)).toEqual({ path: "src/a.ts" });
+  });
+
+  it("doesn't map when the tool declares two of the spellings", () => {
+    const both = tool("write", { path: { type: "string" }, filePath: { type: "string" }, content: { type: "string" } });
+    expect(argsOf("```write\nfile_path: a.txt\n\nhello\n```", both)).toEqual({ content: "file_path: a.txt\n\nhello" });
+  });
+
+  it("leaves a filePath: line inside a header-only edit's text alone once the path is set", () => {
+    const ocEdit = tool("edit", { path: { type: "string" }, oldString: { type: "string" }, newString: { type: "string" } });
+    expect(argsOf("```edit\npath: a.yml\noldString: a: 1\nfilePath: x\nnewString: a: 2\n```", ocEdit))
+      .toEqual({ path: "a.yml", oldString: "a: 1\nfilePath: x", newString: "a: 2" });
+  });
+});
+
 // Port of ghostinator def9700.
 describe("schema-typed fenced arguments", () => {
   function parse(properties: Record<string, unknown>, inner: string) {

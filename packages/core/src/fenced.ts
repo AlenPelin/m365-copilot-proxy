@@ -1480,6 +1480,29 @@ function headerTextValue(inline: string, more: string[]): string {
   return [inline, ...rows].join("\n");
 }
 
+// The file-path param, spelled three ways across harnesses: pi says `path`,
+// Claude Code `file_path`, others `filePath`. The model writes the spelling it
+// knows best, not the one the tools block showed, and an undeclared `filePath:`
+// line ended the header — a write then had that line as the first line of the
+// file and no path (idea from retsimx f529c3c).
+const PATH_SPELLINGS = ["path", "filepath", "file_path"];
+
+/** The tool's file-path param, when it declares exactly one of the spellings. */
+function declaredPathParam(spec: FencedToolSpec): string | undefined {
+  const declared = Object.keys(spec.parameterTypes).filter((p) => PATH_SPELLINGS.includes(p.toLowerCase()));
+  return declared.length === 1 ? declared[0] : undefined;
+}
+
+/** The header param a `key:` line sets: the key itself when declared, or the
+ *  declared path param for another spelling of it — not once that param is set,
+ *  so a `filePath:` line inside a multi-line value stays text. */
+function headerKey(spec: FencedToolSpec, key: string, args: Record<string, unknown>): string | undefined {
+  if (spec.headerParams.includes(key)) return key;
+  if (!PATH_SPELLINGS.includes(key.toLowerCase())) return undefined;
+  const target = declaredPathParam(spec);
+  return target && spec.headerParams.includes(target) && args[target] === undefined ? target : undefined;
+}
+
 /** Parse the inner text of one fenced block into an arguments object, schema-aware. */
 function parseFencedInner(spec: FencedToolSpec, inner: string): Record<string, unknown> | null {
   const lines = inner.split("\n");
@@ -1509,9 +1532,9 @@ function parseFencedInner(spec: FencedToolSpec, inner: string): Record<string, u
     for (; i < lines.length; i++) {
       const line = lines[i];
       const m = line.match(/^([A-Za-z0-9_]+):[ \t]?(.*)$/);
-      if (m && spec.headerParams.includes(m[1])) {
+      const key = m ? headerKey(spec, m[1], args) : undefined;
+      if (m && key) {
         closeOpen();
-        const key = m[1];
         const type = spec.parameterTypes[key];
         if (m[2].trim() === "" && (type === "array" || type === "object")) {
           const end = yamlBlockEnd(lines, i + 1, type === "array");
@@ -1562,7 +1585,15 @@ function parseFencedInner(spec: FencedToolSpec, inner: string): Record<string, u
     // tool whose single param is a boolean, number, array or object) is
     // coerced like a header value (ghostinator def9700).
     const type = spec.parameterTypes[spec.bodyParam];
-    const value = type === undefined || type === "string" ? rest : coerceHeaderValue(rest.trim(), type);
+    let body = rest;
+    // A tool whose one param is the path (a single-`path` read) shows it as the
+    // body, but the model may still label it: `filePath: src/a.ts` is the path
+    // src/a.ts, not a file named "filePath: src/a.ts" (retsimx f529c3c).
+    if (!spec.headerParams.length && spec.bodyParam === declaredPathParam(spec)) {
+      const label = rest.trim().match(/^([A-Za-z0-9_]+):[ \t]*([^\n]*\S)$/);
+      if (label && PATH_SPELLINGS.includes(label[1].toLowerCase())) body = label[2];
+    }
+    const value = type === undefined || type === "string" ? body : coerceHeaderValue(body.trim(), type);
     if (value === INVALID_VALUE) {
       log.error(`tool "${spec.name}": unreadable ${type} body for "${spec.bodyParam}", dropping the call`);
       return null;
