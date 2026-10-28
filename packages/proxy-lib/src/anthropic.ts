@@ -51,14 +51,15 @@ type OpenAIMessage = {
 };
 
 // Anthropic image block → OpenAI image_url part. The handler uploads image_url
-// parts from any message (core image-input.ts), tool results included.
+// parts from any message (core image-input.ts), tool results included. Only
+// inline base64 images: the upload takes data URLs, and the proxy never fetches
+// a client-supplied URL.
 function imagePart(block: AnyBlock): OpenAIPart {
   const src = block.source ?? {};
   if (src.type === "base64" && typeof src.data === "string") {
     return { type: "image_url", image_url: { url: `data:${src.media_type ?? "image/png"};base64,${src.data}` } };
   }
-  if (src.type === "url" && typeof src.url === "string") return { type: "image_url", image_url: { url: src.url } };
-  throw new UnsupportedContentError(`image source "${src.type}" is not supported`);
+  throw new UnsupportedContentError(`image source "${src.type}" is not supported (send the image as base64)`);
 }
 
 function textOf(block: AnyBlock): string {

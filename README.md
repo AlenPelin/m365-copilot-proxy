@@ -261,8 +261,9 @@ retries, throttling) applies unchanged:
 - **Request.** `system` (string or text blocks) plus any `role: "system"` messages become
   one system message. `tool_use` blocks become assistant `tool_calls`; each `tool_result`
   becomes a `tool` message (named after its `tool_use`; `is_error` adds a `[tool error]`
-  line). `image` blocks (base64 or URL, also inside tool results) become `image_url`
-  parts, which the handler uploads to M365. Text `document` blocks become text.
+  line). Base64 `image` blocks (also inside tool results) become `image_url` data-URL
+  parts, which the handler uploads to M365; URL images are a 400 (the proxy never fetches
+  a client-supplied URL). Text `document` blocks become text.
   `thinking`/`redacted_thinking` blocks in assistant history are dropped. Any other block
   type is answered with a 400 `invalid_request_error`, never silently dropped.
   `tools` → OpenAI functions; `tool_choice` `auto`/`any`/`none`/`tool` →
@@ -290,6 +291,9 @@ retries, throttling) applies unchanged:
   when the request has an `anthropic-version` header or `x-m365-claude-code: 1`. IDs are
   prefixed `claude-m365--`, because Claude Code's gateway model discovery only lists IDs
   starting with `claude`/`anthropic`. Other clients get the OpenAI list as before.
+
+Claude Code prints a one-line warning that it doesn't recognise the model name and
+assumes a 200k-token context window. It is harmless; M365 accepts more.
 
 Limits: M365 tool calling is prompt-emulated, so it is less reliable than real Claude;
 this is wire compatibility, not an Anthropic model. Ported from the
@@ -641,6 +645,50 @@ write-up: [docs/hypotheses.md §14](docs/hypotheses.md).
 
 An OpenAI-compatible `POST /v1/images/generations` endpoint on top of this is the
 next step — the core API it needs is already in place.
+
+## Data flow and privacy
+
+What leaves the machine, and to whom. Audited 2026-10-28 (static review of every
+network call in `packages/`, a scan of the built server bundle including its bundled
+dependencies, and a live Claude Code run with all other traffic logged and blocked).
+
+**The proxy talks only to Microsoft.** Every outbound call in the runtime code:
+
+| Destination | What is sent | Code |
+|---|---|---|
+| `login.microsoftonline.com` | Sign-in (MSAL, Microsoft's own first-party client ID `c0ab8ce9-…`); the automated login also types email/password/TOTP code into this page in a local headless Chromium | `core/src/auth.ts` |
+| `wss://substrate.office.com/m365Copilot/Chathub/…` | The chat: the whole prompt — system prompt, messages, tool definitions and tool results (so file contents, command output, paths your agent reads) | `core/src/session.ts` |
+| `substrate.office.com/m365Copilot/UploadFile` | Images in the conversation (base64 only) | `core/src/image-input.ts` |
+| `api.bap.microsoft.com`, `*.environment.api.powerplatform.com` | Create/update the Copilot Studio agent (its instructions) in **your tenant's** default Power Platform environment — visible to your tenant admins | `core/src/agent.ts` |
+| `*.officeapps.live.com` | Download a generated image with a token. The token is only sent to https Microsoft hosts (`isMicrosoftHttpsUrl`) | `core/src/image.ts` |
+
+Not sent anywhere: no telemetry, analytics or crash reporting; no third-party hosts in
+the source or the built bundle (the only non-Microsoft URLs are in code comments);
+the lockfile pulls only from `registry.npmjs.org`. The `/v1/messages` adapter drops
+Claude Code's `metadata` (its user ID) and other unknown fields; only the conversation
+and tools reach M365. Proxy chats use M365 temporary-chat mode, so they don't appear in
+your Copilot history (unless `M365_SAVE_HISTORY=1`).
+
+**Local files** under `~/.config/opencode-m365/`: `msal-cache.json` (tokens, written
+owner-only `0600` on Linux/macOS), `secrets.json` (your email, password and TOTP secret in
+plain text, if you use automated login), `agent-id.json`, `browser-profile/` (login
+cookies), `login-debug/` (screenshots + HTML of a failed login). Debug logs and frame dumps
+(prompts and replies) are written only with `M365_DEBUG`/`M365_TRACE`/`M365_DUMP_FRAMES`.
+
+**Network exposure:** the server binds to `127.0.0.1` (see
+[Use as standalone proxy](#6-use-as-standalone-proxy)); optional `M365_PROXY_API_KEY`.
+
+**Claude Code** (via `scripts/claude-local.*`): with `ANTHROPIC_BASE_URL` on the proxy and
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, a `claude -p` run made **no** connection
+other than to the proxy. A control run without the launcher tried `api.anthropic.com`,
+which shows the check works. Interactive mode was not covered by that test. Tools that
+fetch the web on their own (WebFetch, WebSearch) are left out of the launcher's default
+`--tools`. If you enable them, they reach the sites they're asked to fetch, and Claude
+Code may contact Anthropic to check a domain's safety.
+
+**Policy note:** the proxy presents itself as Microsoft's own web client (client ID,
+headers, a login that avoids bot detection). It sends data only to Microsoft, but your organisation may still treat
+this use of M365 as against its policy.
 
 ## Authentication
 

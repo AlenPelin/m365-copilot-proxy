@@ -11,6 +11,7 @@ export {
 export {
   generateImage,
   fetchImageBytes,
+  isMicrosoftHttpsUrl,
   buildImagePrompt,
   classifyImageFailure,
   ImageGenerationError,

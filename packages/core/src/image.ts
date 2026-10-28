@@ -110,6 +110,18 @@ export function buildImagePrompt(prompt: string, opts: { orientation?: ImageOrie
   return directives.length ? `${prompt.trim()}\n\n${directives.join(" ")}` : prompt;
 }
 
+const MICROSOFT_HOST_SUFFIXES = [".officeapps.live.com", ".microsoft.com", ".office.com", ".office.net", ".sharepoint.com", ".microsoft"];
+
+/** Whether `url` is https on a Microsoft-owned host (generated images live on designerapp.officeapps.live.com). */
+export function isMicrosoftHttpsUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && MICROSOFT_HOST_SUFFIXES.some((s) => `.${u.hostname}`.endsWith(s));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Fetch a generated-image artifact's bytes. The URL 401s without the
  * designerappservice token (§14 F14.6).
@@ -118,6 +130,9 @@ export async function fetchImageBytes(
   url: string,
   artifactToken: string,
 ): Promise<{ data: Buffer; contentType: string }> {
+  // The URL comes from the M365 stream; never hand the bearer token to a host
+  // that isn't Microsoft's, whatever that stream says.
+  if (!isMicrosoftHttpsUrl(url)) throw new Error(`Image artifact URL is not a Microsoft https host: ${url.slice(0, 120)}`);
   const res = await fetch(url, { headers: { Authorization: `Bearer ${artifactToken}` } });
   if (!res.ok) {
     throw new Error(`Image artifact fetch failed: ${res.status} ${res.statusText} for ${url.slice(0, 120)}`);

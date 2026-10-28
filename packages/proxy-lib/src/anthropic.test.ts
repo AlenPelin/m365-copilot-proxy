@@ -66,17 +66,20 @@ describe("Anthropic → OpenAI request", () => {
     expect(t.messages).toEqual([{ role: "system", content: "Top\n\nLegacy" }, { role: "user", content: "Hi" }]);
   });
 
-  it("turns image blocks (also inside tool results) into image_url parts", () => {
+  it("turns base64 image blocks (also inside tool results) into image_url parts, rejects URL images", () => {
     const t = toOpenAIChatRequest(AnthropicMessagesRequest.parse({
       model: "x",
       messages: [
         { role: "user", content: [{ type: "text", text: "what is this" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }] },
         { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] },
-        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", is_error: true, content: [{ type: "image", source: { type: "url", url: "https://x/y.png" } }] }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", is_error: true, content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: "BBBB" } }] }] },
       ],
     }));
     expect(t.messages[0]).toEqual({ role: "user", content: [{ type: "text", text: "what is this" }, { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }] });
-    expect(t.messages[2]).toEqual({ role: "tool", tool_call_id: "t1", name: "Read", content: [{ type: "text", text: "[tool error]\n" }, { type: "image_url", image_url: { url: "https://x/y.png" } }] });
+    expect(t.messages[2]).toEqual({ role: "tool", tool_call_id: "t1", name: "Read", content: [{ type: "text", text: "[tool error]\n" }, { type: "image_url", image_url: { url: "data:image/jpeg;base64,BBBB" } }] });
+    expect(() => toOpenAIChatRequest(AnthropicMessagesRequest.parse({
+      model: "x", messages: [{ role: "user", content: [{ type: "image", source: { type: "url", url: "https://x/y.png" } }] }],
+    }))).toThrow(/base64/);
   });
 
   it("drops thinking blocks but rejects unknown block types", () => {

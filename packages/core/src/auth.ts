@@ -4,6 +4,7 @@ import {
   writeFileSync,
   existsSync,
   mkdirSync,
+  chmodSync,
 } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
@@ -81,7 +82,9 @@ function loadCache(app: msal.PublicClientApplication) {
 
 function saveCache(app: msal.PublicClientApplication) {
   try {
-    writeFileSync(CACHE_FILE, app.getTokenCache().serialize());
+    // Holds refresh tokens: owner-only (no effect on Windows, which uses the profile ACL).
+    writeFileSync(CACHE_FILE, app.getTokenCache().serialize(), { mode: 0o600 });
+    chmodSync(CACHE_FILE, 0o600); // mode above only applies to a new file
   } catch {}
 }
 

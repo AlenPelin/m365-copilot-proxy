@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildImagePrompt, classifyImageFailure } from "./image.js";
+import { buildImagePrompt, classifyImageFailure, fetchImageBytes, isMicrosoftHttpsUrl } from "./image.js";
 
 describe("buildImagePrompt", () => {
   it("leaves the prompt untouched when no options are set", () => {
@@ -53,5 +53,21 @@ describe("classifyImageFailure", () => {
 
   it("classifies a content refusal", () => {
     expect(classifyImageFailure("Sorry, I can't create that image because it goes against our content policy.")).toBe("content_filtered");
+  });
+});
+
+describe("isMicrosoftHttpsUrl / fetchImageBytes", () => {
+  it("accepts only https on Microsoft hosts", () => {
+    expect(isMicrosoftHttpsUrl("https://designerapp.officeapps.live.com/designerapp/Thumbnail.ashx?id=1")).toBe(true);
+    expect(isMicrosoftHttpsUrl("https://substrate.office.com/x")).toBe(true);
+    expect(isMicrosoftHttpsUrl("http://designerapp.officeapps.live.com/x")).toBe(false);
+    expect(isMicrosoftHttpsUrl("https://evil.com/x")).toBe(false);
+    expect(isMicrosoftHttpsUrl("https://officeapps.live.com.evil.com/x")).toBe(false);
+    expect(isMicrosoftHttpsUrl("https://evilmicrosoft.com/x")).toBe(false);
+    expect(isMicrosoftHttpsUrl("not a url")).toBe(false);
+  });
+
+  it("refuses to send the token to a non-Microsoft host, without a request", async () => {
+    await expect(fetchImageBytes("https://evil.com/a.png", "tok")).rejects.toThrow(/not a Microsoft/);
   });
 });
