@@ -370,6 +370,19 @@ describe("looksLikeConfabulation", () => {
     expect(looksLikeConfabulation("I am not able to export documents during this conversation.")).toBe(true);
   });
 
+  it("flags GPT-5.6's English 'no tool is enabled' / 'wasn't able to complete … in this run' (upstream PR #70)", () => {
+    // Exact strings from live Windows/pi runs that went straight to the user.
+    expect(looksLikeConfabulation("I’m sorry, but I wasn’t able to complete and verify the code change in this run.")).toBe(true);
+    expect(looksLikeConfabulation("I can’t issue a tool block because no execution tool is enabled in this turn, and the file/content to process has not been specified.")).toBe(true);
+    expect(looksLikeConfabulation("I can’t create or inspect files in the current directory because file tools aren’t enabled in this chat. To create `ozet.md`, copy the contents of `note.txt` here, and I’ll provide a one-line summary ready to paste into the file.")).toBe(true);
+  });
+
+  it("does NOT flag an honest partial report or prose about tool settings", () => {
+    expect(looksLikeConfabulation("I couldn't complete the integration tests because they need Docker; the 12 unit tests pass.")).toBe(false);
+    expect(looksLikeConfabulation("The bash tool is enabled by default; set M365_HOST_SHELL to override the dialect.")).toBe(false);
+    expect(looksLikeConfabulation("Tools are not enabled for requests without a tools array, so the proxy answers in plain text.")).toBe(false);
+  });
+
   it("does NOT flag what a program can't do, or a question that offers code", () => {
     // Third person: a finished answer describing a tool's limits.
     expect(looksLikeConfabulation("Done. Note that the exporter can't generate PDFs without wkhtmltopdf installed.")).toBe(false);

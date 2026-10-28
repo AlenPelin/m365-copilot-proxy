@@ -166,6 +166,14 @@ it scored 0/5 on real agentic tasks; see [hypotheses §9](docs/hypotheses.md)):
   make** files, documents or PDFs" and "I can't … **in the current session / this chat / this
   conversation**" (upstream PR #78). Both need the "I": a finished answer about what a program
   can't do ("the exporter can't generate PDFs without wkhtmltopdf") is not a give-up.
+  From upstream PR #70: "no (up to four words) tool(s) is/are **available, accessible or
+  enabled**" ("no execution tool is enabled in this turn"); "tools aren't / isn't / are not
+  enabled **in this / for this / here / to me / for me**" ("file tools aren't enabled in this
+  chat"; "tools are not enabled for requests without a tools array" stays prose); and "I
+  wasn't able to / couldn't **complete or finish** … **in this run / session / turn / chat /
+  conversation / environment** or … **the / this / your task or request**". That last one
+  needs the whole run or task: "I couldn't complete the integration tests because they need
+  Docker" is an honest partial report, not a give-up.
 - **Shell-routing (the key lever):** M365's chat-tuned model won't "act as an agent" on
   demand but *will* reflexively write a ```` ```bash ```` block. When the toolset includes a
   shell tool (`bash`/`shell`/`run`/`run_command`/… — any name), the proxy injects "do the

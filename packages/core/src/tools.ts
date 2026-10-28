@@ -291,8 +291,16 @@ const CONFABULATION_PATTERNS: RegExp[] = [
   // ("unable to execute or retrieve any output") and they were absent from the list.
   // An adverb may sit in between: "I can't actually run the tests" (seen with Claude Code).
   /(?:unable|not able|can.?t|cannot)\s+(?:to\s+)?(?:(?:actually|directly|currently|really|just)\s+)?(?:access|inspect|list|read|run|execute|retrieve|fetch|locate|see|open)/i,
-  // "no executable tool is available to me in this turn"
-  /\bno\s+(?:\w+\s+)?tools?\s+(?:is|are)\s+(?:available|accessible)/i,
+  // "no executable tool is available to me in this turn"; GPT-5.6 also says "no
+  // execution tool is enabled in this turn" and "file tools aren't enabled in this
+  // chat" (upstream PR #70). The second is scoped to here / this chat / me, so
+  // "tools are not enabled for requests without a tools array" stays prose.
+  /\bno\s+(?:[\w-]+\s+){0,4}tools?\s+(?:is|are)\s+(?:currently\s+)?(?:available|accessible|enabled)/i,
+  /\btools?\s+(?:aren.?t|isn.?t|are\s+not|is\s+not)\s+(?:currently\s+)?enabled\s+(?:in\s+this|for\s+this|here|(?:to|for)\s+me)/i,
+  // "I wasn't able to complete and verify the code change in this run" (GPT-5.6,
+  // upstream PR #70). Scoped to the whole run or task: "I couldn't complete the
+  // integration tests because they need Docker" is an honest partial report.
+  /\bI\s+(?:wasn.?t\s+able\s+to|was\s+not\s+able\s+to|was\s+unable\s+to|couldn.?t|could\s+not)\s+(?:complete|finish)\b[^.\n]{0,80}\b(?:in\s+this\s+(?:run|session|turn|chat|conversation|environment)|(?:the|this|your)\s+(?:task|request))/i,
   /don.?t\s+have\s+access/i,
   /no\s+(?:longer\s+have|access\s+to)/i,   // "no access to" + "no longer have access/the tools"
   /lost\s+(?:access|my\s+access|the\s+ability)/i,
