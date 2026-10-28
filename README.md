@@ -77,9 +77,8 @@ What it does **not** do — read this before using it on client work:
   are all part of the prompt. If a client contract says their code must not be sent to an
   AI service, this tool breaks that rule, the same as pasting the code into Copilot by hand
   would.
-- **Your tenant admins can see some of it.** The proxy creates a Copilot Studio agent in
-  your tenant's Power Platform environment. Sign-ins and Copilot use are logged by
-  Microsoft for your organisation as usual.
+- **Your tenant admins can see your use.** The proxy creates nothing in your tenant, but
+  sign-ins and Copilot use are logged by Microsoft for your organisation as usual.
 - **The token cache is a key to your account.** `msal-cache.json` holds a refresh token
   (owner-only on Linux/macOS). Anyone who copies it can use Copilot as you until it
   expires. No password or MFA secret is stored.
@@ -140,18 +139,28 @@ it scored 0/5 on real agentic tasks; see [hypotheses §9](docs/hypotheses.md)):
   whole step by writing one ```` ```bash ```` block" framing and routes that block to the
   shell tool. This exploits the one agentic behavior Microsoft's system prompt permits, and
   is what turns 0/5 into real multi-turn loops (verified 9-tool-call bug fix).
-- **Reliability comes from the Copilot Studio agent (below) + the fenced/shell framing** —
-  without the agent, M365 ignores tool instructions and answers in prose
+- **Reliability comes from the fenced/shell framing** (`relay`, `relay_batch`, `baseline`;
+  see [Available models](#available-models) for which model gets which).
 
-### Agent mode
+### No Copilot Studio agent (removed 2026-10-28)
 
-On first use, the system creates a **Copilot Studio agent** with tool-calling instructions baked into its server-side system prompt. This is done via the PowerPlatform API:
+Earlier versions created a **Copilot Studio agent** (a `minimalBots` bot, named
+`m365-tool-agent-<hash>`) in your tenant's default Power Platform environment, published
+it, and attached it to tool requests (`threadLevelGptId`) to put tool-calling instructions
+in its server-side system prompt. That is gone completely: the proxy no longer asks for
+Power Platform/BAP tokens, never calls `api.bap.microsoft.com` or
+`*.environment.api.powerplatform.com`, and creates nothing in your tenant. Every request is
+a plain chat request, the same as the Copilot web page sends. `M365_FORCE_AGENT` is
+ignored, and `~/.config/opencode-m365/agent-id.json` is no longer read (delete it).
 
-1. Discovers the environment URL via the BAP API (`api.bap.microsoft.com`)
-2. Creates a bot with instructions in the Copilot Studio `minimalBots` API
-3. Publishes the bot to get a `TitleId`
-4. Uses the agent ID (`T_{titleId}.{botId}.gpt.default`) in WebSocket chat requests
-5. Caches the agent ID in `~/.config/opencode-m365/agent-id.json`
+Why: basic accounts can't publish it at all (403 *"Publishing this agent requires
+Copilot extensibility"*), every attempt created or deleted bots your admins can see, and
+the launcher already defaulted to running without it. Model notes below that compare
+"with the agent" and "agent-less" are bench history; agent-less is the only path now.
+
+**Bots left over from older versions** stay in your tenant until you delete them. Open
+<https://copilotstudio.microsoft.com>, pick your default environment, open **Agents**,
+and delete any `m365-tool-agent-*`.
 
 ### Conversation reuse
 
@@ -160,7 +169,7 @@ Each agent session reuses the same M365 conversation (same `sessionId` + `conver
 ## Packages
 
 ```
-@m365-copilot/core          — Shared: auth, WebSocket client, tool formatting, proxy server, agent management, session
+@m365-copilot/core          — Shared: auth, WebSocket client, tool formatting, proxy server, session
 ├── @m365-copilot/proxy     — Standalone HTTP proxy binary
 └── @m365-copilot/openclaw-plugin  — OpenClaw config generator + setup CLI + skill
 ```
@@ -406,13 +415,7 @@ assumes a 200k-token context window. It is harmless; M365 accepts more.
   Code. `gpt-5.5-think-deeper` tended to answer from M365's own `/mnt/data` sandbox
   ("the files are not mounted here"), and `claude-sonnet` never answered at all; our
   guess is the tenant hasn't enabled Anthropic models.
-- Publishing the Copilot Studio agent fails with 403 *"Publishing this agent requires
-  Copilot extensibility, which is not enabled for your account"*. The proxy then runs
-  without the agent, using the agent-less framing. It remembers the refusal for the rest
-  of the process instead of deleting and recreating the bot in your tenant for every
-  conversation (`agentRefused` in `core/src/agent.ts`). The `m365-proxy` launcher now
-  defaults to `M365_FORCE_AGENT=0`, so it doesn't even make the first attempt.
-- Without the agent, the framing tells the model that *the user* runs each command it
+- The framing tells the model that *the user* runs each command it
   writes and pastes the output back. The proxy turns those commands into real tool calls,
   so it works, but asked about itself the model will say "you executed it on your
   machine". That is expected. Give it tasks, not questions about its abilities.
@@ -448,8 +451,6 @@ assumes a 200k-token context window. It is harmless; M365 accepts more.
   `/mnt/data` ("dotnet: command not found").
 - The per-message `<harness_note>` also says: never run commands or look for files in your
   own sandbox (python, container.exec, `/mnt/data`).
-- After an empty reply the proxy re-resolves the agent; with a remembered 403 it no longer
-  tries publishing again.
 
 Limits: M365 tool calling is prompt-emulated, so it is less reliable than real Claude;
 this is wire compatibility, not an Anthropic model. Ported from the
@@ -520,8 +521,8 @@ module:
 }
 ```
 
-The service runs as a hardened `DynamicUser` unit. Auth state (`msal-cache.json`,
-`agent-id.json`) persists in `/var/lib/m365-copilot-proxy`. Sign-in is interactive only
+The service runs as a hardened `DynamicUser` unit. Auth state (`msal-cache.json`)
+persists in `/var/lib/m365-copilot-proxy`. Sign-in is interactive only
 and the service has no display (it sets `M365_NO_INTERACTIVE=1`), so a fresh deploy needs a
 token cache: sign in once on a desktop machine and copy its `msal-cache.json` to
 `/var/lib/m365-copilot-proxy/.config/opencode-m365/`, owned by the service. Tokens then
@@ -534,8 +535,8 @@ without NixOS: `nix run github:cramt/m365-copilot-proxy -- 4141`.
 | Model ID | M365 Tone | Description |
 |---|---|---|
 | `gpt-6-think-deeper` | Gpt_6_Reasoning | GPT-6 reasoning. **Needs a paid/premium Copilot seat** (see below); 30/30 on the bench (agent-less, `relay` framing). Defaults to `relay_batch`: 20/20 at 2.1 turns per task (relay: 3.2), 10/10 driving real pi |
-| `gpt-6-sol` | Gpt_6_Sol_Reasoning | GPT-6 Sol ("GPT 6.0 Sol" in the web UI). **Works on every account**, no paid seat needed; uses the tool agent only on a premium account (see below). Defaults to `relay_batch`: 40/40 on the bench with the agent, 60/60 without, 30/30 driving real pi, at 2.1 turns per bench task either way |
-| `gpt-6.1-sol` | Gpt_61_Sol_Reasoning | GPT-6.1 Sol ("GPT-6.1 Sol" in the web UI). **Works on every account**, and uses the tool agent only on a premium account, like `gpt-6-sol`. Defaults to `relay_batch`: 40/40 on the bench, 30/30 driving real pi, at 2.7 turns per bench task with the agent and 2.2 without, and without the agent it keeps out of its sandbox, which `gpt-6-sol` doesn't always (see below) |
+| `gpt-6-sol` | Gpt_6_Sol_Reasoning | GPT-6 Sol ("GPT 6.0 Sol" in the web UI). **Works on every account**, no paid seat needed; Defaults to `relay_batch`: 60/60 on the bench without the (now removed) agent, 30/30 driving real pi, at 2.1 turns per bench task either way |
+| `gpt-6.1-sol` | Gpt_61_Sol_Reasoning | GPT-6.1 Sol ("GPT-6.1 Sol" in the web UI). **Works on every account**. Defaults to `relay_batch`: 40/40 on the bench, 30/30 driving real pi, at 2.2 turns per bench task, and it keeps out of its sandbox, which `gpt-6-sol` doesn't always (see below). **Best choice on a basic account** |
 | `gpt-5.6-think-deeper` | Gpt_5_6_Reasoning | GPT-5.6 reasoning — 27/30 on the bench, tied with `gpt-5.5-think-deeper` |
 | `gpt-5.6` / `gpt-5.6-quick` | Gpt_5_6_Chat | GPT-5.6 fast ("GPT 5.6 Quick response" in the web UI). **Weak at tool calling** — 7/30 on the bench (see below) |
 | `gpt-5.5-think-deeper` | Gpt_5_5_Reasoning | **Recommended default for agents/tool-calling** — 26/30 on the bench |
@@ -548,7 +549,7 @@ without NixOS: `nix run github:cramt/m365-copilot-proxy -- 4141`.
 | `claude-sonnet-5` | Claude_Sonnet_5 (paid scenario) | Claude Sonnet 5. **Needs a paid/premium Copilot seat**; no separate quota. 27/30 on the bench with the `relay` framing (6/40 with `baseline`; see below) |
 | `claude-sonnet-think-deeper` | Claude_Sonnet_Reasoning | Claude reasoning |
 | `claude-opus` / `claude-opus-5.5` | Claude_Opus (paid scenario) | Claude Opus 5.5. **Needs a paid/premium Copilot seat** and has a small separate quota: 40 turns a day (see below). 10/10 on the bench with `relay`; defaults to `relay_batch`. `claude-opus-5` is kept as an alias |
-| `claude-opus-4.8` | Claude_Opus (included scenario) | Claude Opus 4.8. **Premium accounts only**, but **no** priority-access quota. With its default `relay_batch` framing and the tool agent: 30/30 on the bench at 2.5 turns per task, 10/10 driving real pi. `claude-opus-4.5` is kept as an alias (it was Opus 4.5 until October 2026) |
+| `claude-opus-4.8` | Claude_Opus (included scenario) | Claude Opus 4.8. **Premium accounts only**, but **no** priority-access quota. With its default `relay_batch` framing: 30/30 on the bench at 2.5 turns per task (measured with the now-removed agent; agent-less solved the same under `relay_batch`), 10/10 driving real pi. `claude-opus-4.5` is kept as an alias (it was Opus 4.5 until October 2026) |
 | `gpt-5.4` / `gpt-5.4-quick` | Gpt_5_4_* | GPT-5.4 |
 | `gpt-5.3` / `gpt-5.3-think-deeper` | Gpt_5_3_* | GPT-5.3 |
 | `gpt-5.2` / `gpt-5.2-think-deeper` | Gpt_5_2_* | GPT-5.2 |
@@ -563,8 +564,10 @@ isn't directly comparable.
 > `gpt-5.3-quick` → `Gpt_5_3_Chat`), so existing configs need no change.
 
 > ✅ **For tool calling, use `gpt-5.5-think-deeper` (the default when no model is sent).**
-> The current agent + fenced/shell-routing path makes this reasoning tone robust:
-> 26/30 on the bench, tied with `gpt-5.6-think-deeper` and well ahead of every benchmarked
+> The fenced/shell-routing path makes this reasoning tone robust:
+> 26/30 on the bench (measured with the Copilot Studio agent, which is now removed; GPT-5.x
+> without it is less tested, and on a basic account it tended to answer from M365's own
+> `/mnt/data` sandbox — there, prefer `gpt-6.1-sol`), tied with `gpt-5.6-think-deeper` and well ahead of every benchmarked
 > chat tone (docs/hypotheses.md §19), and 100% compliance and solve across prompt/toolset
 > sizes in the tool-call harness (§12.10/§12.11). The **default `m365-copilot` (magic) tone is *not* reliable** for
 > tools — it confabulates ("I no longer have access to the filesystem tools") and solves
@@ -609,40 +612,29 @@ entitlement gate; it does not imply a budget. GPT-6 has no priority-access allow
 throttled by the same per-conversation cap and thread-rate governor as every other model, so
 none of the Opus advice about rationing turns applies.
 
-**Tool calls go without the tool agent, and with a `relay` framing.** With the Copilot Studio
-tool agent attached, `Gpt_6_Reasoning` doesn't serve at all (a canned apology, on every account),
-so the proxy sends GPT-6 tool requests agent-less, as it does Claude's (#41). Agent-less, under the
+**Tool calls use a `relay` framing.** (With the old Copilot Studio tool agent attached,
+`Gpt_6_Reasoning` didn't serve at all, #41; the agent is now removed.) Under the
 `baseline` framing GPT-6 worked in M365's own code interpreter instead of calling your tools:
 0/30 on the bench. Under `relay` it scored **30/30** (confab-retry off, 2026-10-01), and 5/5 driving
 real pi. The default is now `relay_batch`, which asks it to put as much as it can into each block:
 20/20 on the bench at 2.1 turns per task against relay's 3.2, and 10/10 through real pi at 3 turns
-per run (hypotheses §25). `M365_FORCE_AGENT=1` and `M365_FRAMING_VARIANT` still override both.
+per run (hypotheses §25). `M365_FRAMING_VARIANT` still overrides it.
 `gpt-5.5-think-deeper` remains the recommended default and the no-model fallback, because it needs
 no entitlement: making GPT-6 the default would hand most seats a model they can't reach.
 
-### GPT-6 Sol (`gpt-6-sol`) — no entitlement, the agent only on premium
+### GPT-6 Sol (`gpt-6-sol`) — no entitlement
 
 The web client calls it **"GPT 6.0 Sol"**; the tone is `Gpt_6_Sol_Reasoning` and it identifies
 itself as the GPT-6 reasoning model. Unlike `gpt-6-think-deeper` it is **not** entitlement-gated: it
 serves on the default included scenario on premium and non-premium accounts alike, so the proxy
 sends nothing special for it.
 
-**The tool agent depends on the account.** With the Copilot Studio tool agent attached, GPT-6 Sol
-serves on a premium (paid Copilot) account and returns a canned apology on a non-premium one.
-Nothing in the login token tells the two apart, so the proxy tries: the first tool request carries
-the agent, and if it comes back as that dead route the proxy remembers it for the rest of the
-process and re-sends the request without the agent. Your client never sees the failure; a
-non-premium account spends one ~3 s turn per proxy start, which `M365_FORCE_AGENT=0` avoids. A
-premium account occasionally returns the same apology as a one-off; once the agent has answered,
-the proxy treats that as a transient and retries instead of dropping the agent.
-
-**Without the agent it has a sandbox of its own.** It runs `bash` in a remote machine (`/mnt/data`,
+**It has a sandbox of its own.** It runs `bash` in a remote machine (`/mnt/data`,
 `/home/oai`), finds none of your files there, and asks you to upload them, or hands back a Teams link
 to a file it made. Turning off M365's code interpreter (`M365_NO_CODE_INTERPRETER=1`) doesn't stop
-it. The user-voice `relay` framing does: on the bench it solved 60/60 agent-less, against 0–6/10 for
-every other framing, and 30/30 with the agent (the others 3–9/10). Its batching variant,
-`relay_batch`, is the default on both paths: it keeps relay's wording and asks for one script per
-turn, which cut the turns by a third on the bench (60/60 agent-less, 40/40 with the agent) and by a
+it. The user-voice `relay` framing does: on the bench it solved 60/60, against 0–6/10 for every other
+framing. Its batching variant, `relay_batch`, is the default: it keeps relay's wording and asks for
+one script per turn, which cut the turns by a third on the bench (60/60) and by a
 fifth to a quarter in real pi (30/30 runs). It doesn't send GPT-6 Sol to its sandbox any more often
 than `relay` (an earlier, smaller run suggested it did; the retest found no difference). Details:
 [hypotheses §23, §28](docs/hypotheses.md).
@@ -651,8 +643,7 @@ than `relay` (an earlier, smaller run suggested it did; the retest found no diff
 
 The web client calls it **"GPT-6.1 Sol"**; the tone is `Gpt_61_Sol_Reasoning`, and like GPT-6 Sol it
 identifies itself as the GPT-6 reasoning model. It is routed exactly like `gpt-6-sol`: the default
-included scenario, which serves it on premium and non-premium accounts alike, and the tool agent
-only on a premium account, which the proxy learns from the first tool request (see above).
+included scenario, which serves it on premium and non-premium accounts alike.
 
 **It has a separate allowance, which the proxy doesn't use.** The paid scenario serves it too, but
 every paid turn spends a GPT-6.1 Sol allowance of 40 turns a day and 75 a week, the size of Opus
@@ -660,15 +651,14 @@ every paid turn spends a GPT-6.1 Sol allowance of 40 turns a day and 75 a week, 
 So the proxy stays on the included one. Whether the paid scenario serves a newer model behind the
 same name is still open: the model can't tell you, since its self-description is M365's.
 
-**It defaults to `relay_batch` on both paths.** Without the agent it has a sandbox like GPT-6 Sol's,
+**It defaults to `relay_batch`.** It has a sandbox like GPT-6 Sol's,
 and the framings that put the instructions in a `<system>` block send it there: `baseline` solved
 0/20 and `minimal` 2/20. The framings written as the user's own request kept it out entirely. As with
 GPT-6 Sol, it went to the sandbox no more often under `relay_batch` than under `relay` (never, on the
-bench), so here the turn saving decides: 40/40 on the bench against relay's 39/40 at 17% fewer turns
-with the agent and 36% fewer without, and 30/30 runs driving real pi at 29% and 47% fewer turns (about
-4 and 3 per run). Details: [hypotheses §27](docs/hypotheses.md).
+bench), so here the turn saving decides: 40/40 on the bench against relay's 39/40 at 36% fewer turns,
+and 30/30 runs driving real pi at 47% fewer turns (about 3 per run). Details: [hypotheses §27](docs/hypotheses.md).
 
-**Without the agent it matches GPT-6 Sol on the bench, but stays out of its sandbox.** Side by side
+**It matches GPT-6 Sol on the bench, but stays out of its sandbox.** Side by side
 on both non-premium accounts, the two solved the same tasks at the same turns under every framing:
 `relay_batch` and `honest` everything (about 2.1 and 2.9 turns per task), `baseline` and `minimal`
 nothing. The difference is the sandbox: told by the user's note that it's the wrong machine, GPT-6.1
@@ -718,12 +708,12 @@ The proxy picks the scenario from the model ID, so nothing has to be configured.
 then gets a licence-refusal message, and `claude-opus-4.8` a 502 saying it's premium-only. `licenseType`
 alone unlocks nothing; override either with `M365_SCENARIO` / `M365_LICENSE_TYPE`.
 
-**`claude-opus-4.8`'s tool requests carry the Copilot Studio tool agent**, like `claude-opus`'s.
-Without the agent Opus 4.8 has a code interpreter of its own, and unless the framing steers it away it
-works there instead of in your harness, reporting success on files it never touched. The default
-`relay_batch` framing does steer it away, and there the two paths solve the same, so the agent is the
-safety margin. Requests without tools go without it. Until October 2026 this route served Claude Opus
-4.5, and only through the agent; `claude-opus-4.5` now reaches Opus 4.8 (see hypotheses §24, §36).
+**Opus 4.8 has a code interpreter of its own**, and unless the framing steers it away it works
+there instead of in your harness, reporting success on files it never touched. The default
+`relay_batch` framing does steer it away: on the bench it solved the same with and without the old
+Copilot Studio agent, which used to be the safety margin and is now removed. Until October 2026 this
+route served Claude Opus 4.5 (only through that agent); `claude-opus-4.5` now reaches Opus 4.8 (see
+hypotheses §24, §36).
 
 **`claude-opus` is metered separately: 40 turns a day, 75 a week.** Opus 5.5 draws on a "priority
 access" budget distinct from the ~600-message conversation cap, and **every M365 turn costs one,
@@ -746,7 +736,7 @@ What the proxy does about it:
   per tool call, and avoids the jailbreak-filter retries that cost `claude-opus`'s old default framing
   a wasted turn on about 40% of tasks.
 
-**Both use the tool agent and the `relay_batch` framing.** On the bench Opus 4.5 solved nearly every
+**Both use the `relay_batch` framing.** On the bench Opus 4.5 solved nearly every
 task whatever the framing, so two other things decided it. M365's jailbreak classifier: the proxy's
 older `<system>`-tagged framings tripped it on a third of the tasks (each one a wasted turn and a
 retry in a fresh conversation), the user-voice `relay` framings on none. And turns:
@@ -786,11 +776,10 @@ await generateImage("a lighthouse", { style: "icon" });                        /
 **You don't have to call `generateImage` at all.** Just like the web client, a plain
 chat turn draws when asked — send `"draw me an image of a green teapot"` to
 `/v1/chat/completions` (or `ModelSession.run`) with no tools and the image comes back
-embedded in the reply as a markdown data-URI. (Image gen is enabled on the agent-less
-path only, so it never competes with tool calling; set `M365_NO_IMAGE_GEN=1` to force
-pure text.)
+embedded in the reply as a markdown data-URI. (Image gen is enabled on every chat
+turn, tool requests included; set `M365_NO_IMAGE_GEN=1` to force pure text.)
 
-Runs its own agent-less session. Uses the same login as chat; the artifact fetch uses
+Runs its own session. Uses the same login as chat; the artifact fetch uses
 a `designerappservice` token acquired silently from the existing cache. Protocol
 write-up: [docs/hypotheses.md §14](docs/hypotheses.md).
 
@@ -816,7 +805,6 @@ dependencies, and a live Claude Code run with all other traffic logged and block
 | `login.microsoftonline.com` | Sign-in (MSAL, Microsoft's own first-party client ID `c0ab8ce9-…`), in a visible Chromium window where you type your own credentials; the proxy never sees your password | `core/src/auth.ts` |
 | `wss://substrate.office.com/m365Copilot/Chathub/…` | The chat: the whole prompt — system prompt, messages, tool definitions and tool results (so file contents, command output, paths your agent reads) | `core/src/session.ts` |
 | `substrate.office.com/m365Copilot/UploadFile` | Images in the conversation (base64 only) | `core/src/image-input.ts` |
-| `api.bap.microsoft.com`, `*.environment.api.powerplatform.com` | Create/update the Copilot Studio agent (its instructions) in **your tenant's** default Power Platform environment — visible to your tenant admins | `core/src/agent.ts` |
 | `*.officeapps.live.com` | Download a generated image with a token. The token is only sent to https Microsoft hosts (`isMicrosoftHttpsUrl`) | `core/src/image.ts` |
 
 Not sent anywhere: no telemetry, analytics or crash reporting; no third-party hosts in
@@ -827,7 +815,7 @@ and tools reach M365. Proxy chats use M365 temporary-chat mode, so they don't ap
 your Copilot history (unless `M365_SAVE_HISTORY=1`).
 
 **Local files** under `~/.config/opencode-m365/`: `msal-cache.json` (tokens, written
-owner-only `0600` on Linux/macOS), `agent-id.json`, `browser-profile/` (login
+owner-only `0600` on Linux/macOS), `browser-profile/` (login
 cookies), `login-debug/` (screenshots + HTML of a failed login). Debug logs and frame dumps
 (prompts and replies) are written only with `M365_DEBUG`/`M365_TRACE`/`M365_DUMP_FRAMES`.
 
@@ -865,10 +853,12 @@ generated `http://localhost:<port>` callback is rejected with `AADSTS50011`, and
 grant demands a `client_secret` only Microsoft holds (`AADSTS7000218`). Both measured live in
 [§13](docs/hypotheses.md); don't spend probes re-deriving them.
 
-Three token scopes are acquired:
+Token scopes acquired:
 - `substrate.office.com/sydney/*` — For M365 Copilot chat
-- `api.powerplatform.com/.default` — For Copilot Studio agent management
-- `api.bap.microsoft.com/.default` — For environment discovery
+- `designerappservice.officeapps.live.com/.default` — For fetching generated images (silently, from the cache)
+
+No Power Platform or BAP scopes: the Copilot Studio agent was removed (see
+[No Copilot Studio agent](#no-copilot-studio-agent-removed-2026-10-28)).
 
 ## Environment variables
 
@@ -894,7 +884,6 @@ Three token scopes are acquired:
 | `M365_NO_INTERACTIVE` | Set to `1` to never open the sign-in window. For systemd/CI hosts: a missing or expired token is then an error. Copy `msal-cache.json` from a desktop sign-in instead. |
 | `M365_INTERACTIVE_TIMEOUT_MS` | How long to wait for you to finish the interactive sign-in (default `600000`, i.e. 10 minutes). |
 | `M365_LOGIN_LOCALE` / `M365_LOGIN_TIMEZONE` | Browser locale and timezone presented during login (defaults `en-GB` / `Europe/Copenhagen`). These are part of the anti-bot-scoring fingerprint ([§11 F25](docs/hypotheses.md)) — set them to match your own machine if AAD starts treating the sign-in window as a bot. |
-| `M365_FORCE_AGENT` | **The `m365-proxy` launcher (`pnpm run proxy`) sets it to `0` when unset**, so no agent is created or used by default: basic accounts get a 403 publishing it, and every attempt touches bots in the tenant. Set `1` or `auto` to change that (`auto`, or any other value, gives the per-model choice described next). Override which tool requests carry the Copilot Studio tool agent. `1` attaches it to every tool request (and turns off the GPT-6 Sol fallback below); `0` never attaches it. Unset, the proxy decides per model: GPT-5.x, `m365-copilot` and both Opus models take it, the other Claude models and `gpt-6-think-deeper` don't, and `gpt-6-sol` / `gpt-6.1-sol` take it only on a premium account, which the proxy learns from the first request. On a non-premium account `0` saves the probe turn (~3 s) per GPT-6 Sol model per proxy start. |
 | `M365_OPUS_FALLBACK_MODEL` | Model to serve `claude-opus` (Opus 5.5) requests with once its priority-access budget is used up, instead of returning a 429 — typically `claude-opus-4.8`, which isn't metered (premium accounts only). Applies until the budget resets; the response's `model` field names the model that answered. Unset by default. |
 | `M365_SONNET_FALLBACK_MODEL` | The same for `claude-sonnet-5.5` (Sonnet 5.5) once its priority-access budget is used up — e.g. `claude-sonnet-5` (unmetered) or `claude-sonnet` (Sonnet 4.6, any account). A fallback naming a metered model is ignored. Unset by default. |
 | `M365_SCENARIO` / `M365_LICENSE_TYPE` | Override the entitlement the WebSocket is opened under (defaults: `OfficeWebIncludedCopilot` / `Starter`, switching to `OfficeWebPaidCopilot` / `Premium` for the entitlement-gated models — `claude-opus`, `gpt-6-think-deeper`, `claude-sonnet-5` and `claude-sonnet-5.5`; `claude-opus-4.8` and `gpt-6.1-sol` stay on the included one). `scenario` is what gates the model list (and picks Sonnet 4.6 vs 5.5 for the `Claude_Sonnet` tone, Sonnet 4.6 vs 5 for `Claude_Sonnet_5`, Opus 4.8 vs 5.5 for `Claude_Opus`); `licenseType` rides along and unlocks nothing by itself. Forcing the paid scenario on `gpt-6.1-sol` spends its separate GPT-6.1 Sol allowance (40 turns a day, 75 a week), which the proxy doesn't track. |
@@ -950,7 +939,6 @@ All stored in `~/.config/opencode-m365/`:
 | File | Description |
 |---|---|
 | `msal-cache.json` | MSAL token cache (auto-managed) |
-| `agent-id.json` | Cached Copilot Studio agent ID |
 | `debug.log` | Debug log (when `M365_DEBUG=1`; renamed by `M365_LOG_FILE`) |
 | `frames/` | WebSocket frame dumps (when `M365_DUMP_FRAMES=1`; moved by `M365_FRAME_DIR`) |
 
@@ -967,7 +955,7 @@ pnpm run test:live    # Run live integration tests against M365
 ## Known limitations
 
 - **M365 "disengages" on large tool payloads** — heavy agent harnesses (e.g. opencode's ~15-tool prompt) get empty `Disengaged` responses. Keep the toolset lean (this is why [pi](https://pi.dev/) works well). A heavy harness can be trimmed to fit, though opencode in particular needs that done in the proxy rather than through its own config, and its tool count has since dropped — see [docs/m365-copilot-api.md](docs/m365-copilot-api.md#the-disengaged-filter).
-- Tool calling is emulated (prompt injection + a Copilot Studio agent), not native function calling — robust with the agent, unreliable without it
+- Tool calling is emulated (prompt injection + fenced/shell framing), not native function calling — reliable on the tuned models and framings, less so elsewhere
 - The `think-deeper` / `*_Reasoning` models take 10-30s per response
 - Hard quota of ~600 messages **per conversation** (mitigated by session reuse + delta sends)
 - `claude-opus` needs a paid/premium seat and has its own small priority-access quota (40 turns a day, 75 a week; every tool call is a turn) that resets at midnight UTC (weekly on Monday); exhaustion surfaces as a 429, or as a switch to `M365_OPUS_FALLBACK_MODEL`. `claude-opus-4.8` needs a premium account too, but has no such quota

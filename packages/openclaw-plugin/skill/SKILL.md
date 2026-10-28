@@ -15,7 +15,6 @@ The M365 Copilot proxy translates OpenAI-format chat completion requests into M3
 
 - **All M365 Copilot models**: m365-copilot, quick, think-deeper, gpt-5.4, gpt-5.3, gpt-5.2 (with quick/reasoning variants)
 - **Tool calling**: Automatic translation of OpenAI tool_call format through prompt injection + fenced code block parsing
-- **Agent mode**: Uses a Copilot Studio agent for server-side system prompt control
 - **Streaming**: Full SSE streaming support
 - **Session reuse**: Conversations share a single M365 session, saving quota (600 msg limit per conversation)
 - **Delta messages**: Follow-up turns only send new messages, not the full history

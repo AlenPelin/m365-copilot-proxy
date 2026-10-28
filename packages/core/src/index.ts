@@ -31,8 +31,6 @@ export {
   type BackoffOptions,
 } from "./auth-recovery.js";
 
-export { getOrCreateAgent, getEnvironmentUrl, environmentUrlFromName } from "./agent.js";
-
 export {
   decodeJwt,
   getToneForModel,
@@ -42,20 +40,10 @@ export {
   isSonnet5Model,
   isSonnet55Model,
   isIncludedOpusModel,
-  toneUsesToolAgent,
-  toolRequestUsesAgent,
   isPremiumOnlyModel,
-  requestUsesAgent,
   meteredBudgetOf,
   priorityAccessFallbackModel,
   PRIORITY_ACCESS_FALLBACK_ENV,
-  noteAgentRouteDead,
-  noteAgentRouteAlive,
-  isAgentRouteAlive,
-  resetAgentRoutes,
-  AGENTLESS_TOOL_TONES,
-  AGENT_CLAUDE_TONES,
-  PREMIUM_ONLY_AGENT_TONES,
   PAID_SCENARIO_TONES,
   PAID_SCENARIO_MODELS,
   INCLUDED_SCENARIO_MODELS,

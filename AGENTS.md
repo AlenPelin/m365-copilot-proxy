@@ -157,8 +157,9 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
 
 ## Gotchas to know before you "fix" something
 
-- **Tool calling needs the Copilot Studio agent AND the fenced/shell format.** The agent
-  alone isn't enough — the old JSON `{"tool":...}` format scored 0/5 on real agentic tasks
+- **The Copilot Studio agent is removed (2026-10-28); tool calling is the fenced/shell
+  format alone.** Don't re-add the agent: it creates bots in the user's tenant and basic
+  accounts can't publish it (403). The agent alone was never enough — the old JSON `{"tool":...}` format scored 0/5 on real agentic tasks
   and was **removed**. Tools are now emitted as Markdown fences, and the load-bearing lever
   is **shell-routing**: M365's chat model won't act-as-agent but will write a ```` ```bash ````
   block, which the proxy routes to the harness's shell tool. That + the per-request shell
@@ -254,8 +255,8 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
   in `<user>` tags either: tags are just text to it, and the variant that did (`relay_inline`,
   removed) scored 1/20 (§21 F43).
   **Read its `ChainOfThoughtSummary` frames** (`M365_DUMP_FRAMES=1`) — they say why it refused.
-- **Not every tone serves with the tool agent — `toneUsesToolAgent()` decides, per exact tone**
-  (`M365_FORCE_AGENT=1`/`0` overrides it either way).
+- **(History) Not every tone served with the old tool agent — `toneUsesToolAgent()` decided,
+  per exact tone; removed with the agent.**
   Claude tones (except `Claude_Opus`, see above) and `Gpt_6_Reasoning` go agent-less even with tools.
   `Claude_Sonnet` and `Claude_Sonnet_5` were benched with the agent on a premium account (§30 F75): it
   removes the sandbox of Sonnet 4.6, Sonnet 5 and Sonnet 5.5, but Sonnet 5 (`Claude_Sonnet_5` @ paid)

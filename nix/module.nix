@@ -3,8 +3,8 @@
 # Runs the Nitro proxy as a hardened systemd service. Sign-in is interactive only,
 # and a service has no display, so sign in once on a desktop machine and copy its
 # msal-cache.json to /var/lib/m365-copilot-proxy/.config/opencode-m365/ (owned by the
-# service). Tokens then refresh silently; msal-cache.json + agent-id.json persist in
-# the StateDirectory across restarts.
+# service). Tokens then refresh silently; msal-cache.json persists in the StateDirectory
+# across restarts.
 #
 # Imported from the flake as `import ./nix/module.nix self`, where `self` supplies
 # the default package for the host's system.

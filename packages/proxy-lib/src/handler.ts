@@ -4,12 +4,7 @@ import {
   createLogger,
   trunc,
   getToneForModel,
-  requestUsesAgent,
   isPremiumOnlyModel,
-  noteAgentRouteDead,
-  noteAgentRouteAlive,
-  isAgentRouteAlive,
-  PREMIUM_ONLY_AGENT_TONES,
   defaultFramingForModel,
   sandboxCommandAsShellCall,
   currentFramingVariant,
@@ -386,22 +381,9 @@ export async function handleChatCompletion(
     conv.sentMessageCount = 0;
   }
 
-  // Which requests carry the declarative tool agent. GPT-the-chat-model won't
-  // tool-call agent-less (0/4), so it needs the agent. Claude tool-calls reliably
-  // AGENT-LESS via shell-routing (F23), and on a non-premium account the agent
-  // path doesn't serve Claude at all (§22 F44) — except Claude Opus, which takes
-  // it: agent-less, Opus 4.8 works in its own code interpreter unless the
-  // framing steers it out (§36). `Gpt_6_Reasoning` doesn't serve
-  // with the agent on any account (§22 F45, #41), and `Gpt_6_Sol_Reasoning` /
-  // `Gpt_61_Sol_Reasoning` only on a premium one (learned at runtime, see the
-  // dead-route fallback in runBuffered). The rule lives in core (`requestUsesAgent`);
-  // M365_FORCE_AGENT=1 / =0 forces the agent on / off for tool requests.
-  // Derive it from the RESOLVED tone, not the raw model string: getToneForModel
-  // routes any unmapped `claude-*` (e.g. the `claude-opus-5[1m]` a Claude Code
-  // client sends) to a Claude tone, so this keeps that request on the working
-  // agent-less path. The old `/claude/i.test(model)` + `magic` fallback split a
-  // claude-* string into GPT-tone + agent-suppressed — the confab quadrant we
-  // observed. One resolved tone drives both.
+  // Derive behaviour from the RESOLVED tone, not the raw model string:
+  // getToneForModel routes any unmapped `claude-*` (e.g. the `claude-opus-5[1m]`
+  // a Claude Code client sends) to a Claude tone.
   let tone = getToneForModel(model);
   // Framing default follows the MODEL (defaultFramingForModel): the Claude,
   // GPT-6 and GPT-6 Sol tones get a user-voice relay (Sonnet reads the
@@ -412,7 +394,6 @@ export async function handleChatCompletion(
   // Keyed on the model, not the tone, because one tone can serve two models.
   // M365_FRAMING_* still wins.
   let framingVariant = currentFramingVariant(defaultFramingForModel(model));
-  let useToolAgent = requestUsesAgent(model, !!hasTools);
 
   // Format message: full prompt on first turn, delta on follow-ups.
   // M365 is stateful — it remembers everything from prior turns,
@@ -472,18 +453,15 @@ export async function handleChatCompletion(
 
   // `onDelta` (when provided) forwards each text delta to the caller AS IT ARRIVES,
   // for live incremental streaming. It's safe to forward without ever retracting:
-  // runBuffered only retries on an EMPTY attempt (Disengaged, dead-agent, throttle),
+  // runBuffered only retries on an EMPTY attempt (Disengaged, throttle),
   // and an empty attempt emits no deltas — so a forwarded delta always belongs to the
   // one attempt that produced content and is never re-sent by a subsequent retry.
   async function runBuffered(
     onDelta?: (delta: string) => void,
   ): Promise<{ fullText: string } | { error: Response }> {
-    let agentRefreshed = false;
     let disengageRetried = false;
-    let agentFallbackDone = false;
     let priorityFallbackDone = false;
     let internalErrorFreshRetried = false;
-    let originalText = text;
     // Self-imposed pacing while the account is degraded (thread-rate throttle). A
     // no-op when healthy; during backoff it sleeps a jittered delay so we stop
     // starting fresh turns into the throttle and let it self-heal (H-R1). This
@@ -517,11 +495,7 @@ export async function handleChatCompletion(
         // forcing retries included; run() calls the same wait before its reconnect.
         const waitForBudget = () => awaitTurnBudget({ signal: opts.signal, maxWaitMs: body.stream ? undefined : UNSTREAMED_BUDGET_WAIT_LIMIT_MS });
         await waitForBudget();
-        // Only attach the tool-calling agent when the request actually has tools.
-        // The agent overrides `tone` (forces GPT-5), so tool-less requests must
-        // skip it to reach the model the tone selects (e.g. Claude). See
-        // ModelSession.run / docs H8.6.
-        copilotStream = await session.run(text, model, signal, useToolAgent, inputImages, waitForBudget);
+        copilotStream = await session.run(text, model, signal, inputImages, waitForBudget);
       } catch (err: any) {
         if (err instanceof TurnBudgetHold) return { error: turnBudgetHoldResponse(err) };
         return { error: jsonResponse(502, { error: { message: err.message, type: "upstream_error" } }) };
@@ -587,37 +561,6 @@ export async function handleChatCompletion(
         return { error: throttledResponse(copilotStream.result) };
       }
 
-      // A tone whose agent route serves only on a premium account came back as
-      // the dead route (`InternalError`, no content): this account isn't
-      // premium. Remember that for the process, and re-send the WHOLE request
-      // agent-less in a fresh conversation — the dead turn processed nothing, and
-      // a delta would have no context. Free retry, at most once per request; the
-      // next request on this tone goes agent-less from the start. Never under
-      // M365_FORCE_AGENT=1, which asked for the agent regardless.
-      // A premium account produces the identical wire state as a one-off
-      // transient (§23), so once the agent has answered for this tone the
-      // InternalError falls through to the ordinary empty-reply handling below
-      // instead (isAgentRouteAlive).
-      if (
-        useToolAgent && !agentFallbackDone &&
-        PREMIUM_ONLY_AGENT_TONES.has(tone) &&
-        !isAgentRouteAlive(tone) &&
-        process.env.M365_FORCE_AGENT !== "1" &&
-        copilotStream.result?.value === "InternalError" &&
-        !copilotStream.hasContent && fullText.length === 0
-      ) {
-        agentFallbackDone = true;
-        noteAgentRouteDead(tone);
-        useToolAgent = false;
-        session.newConversation();
-        text = formatMessages(body.messages, body.tools, body.tool_choice, session.conversationId, framingVariant);
-        inputImages = imageUrls(body.messages);
-        originalText = text;
-        log.info(`Agent route dead for ${tone} (InternalError) — this account isn't premium; re-sending agent-less with '${framingVariant}' framing in a fresh conversation`);
-        attempt--;
-        continue;
-      }
-
       // A priority-access cap (Opus 5.5, Sonnet 5.5) arrives as a turn whose
       // text is a refusal ("You've used your available priority access…") and
       // whose final result is `OutOfCredits` (§24 F55). Left alone, the client
@@ -639,11 +582,9 @@ export async function handleChatCompletion(
           model = fallback;
           tone = getToneForModel(model);
           framingVariant = currentFramingVariant(defaultFramingForModel(model));
-          useToolAgent = requestUsesAgent(model, !!hasTools);
           session.newConversation();
           text = formatMessages(body.messages, body.tools, body.tool_choice, session.conversationId, framingVariant);
           inputImages = imageUrls(body.messages);
-          originalText = text;
           attempt--;
           continue;
         }
@@ -654,7 +595,6 @@ export async function handleChatCompletion(
 
       if (copilotStream.hasContent || fullText.length > 0) {
         noteRequestOutcome(false, convId); // clean response → degradation has lifted
-        if (useToolAgent) noteAgentRouteAlive(tone); // the agent route answered on this account
         conv.servedModel = model;
         inputImages = []; // on the server now: a forcing retry in this conversation needn't resend them
         return { fullText };
@@ -663,8 +603,7 @@ export async function handleChatCompletion(
       // Disengaged is a deliberate safety refusal, NOT a transient empty. Retrying
       // it with "Please continue." just disengages again and burns the 600-msg
       // quota (observed: 5 wasted messages in one turn). Fail fast with a clear
-      // signal instead. Commonly fires when a heavy tool prompt is paired with a
-      // non-default model/agent (e.g. a Claude tone + the declarative agent).
+      // signal instead. Commonly fires on a heavy tool prompt.
       if (copilotStream.messageType === "Disengaged") {
         // F22: the default framing's override-shape language occasionally trips Azure
         // Prompt Shields (jailbreak classifier) on benign requests (e.g. "replace X
@@ -690,7 +629,7 @@ export async function handleChatCompletion(
         return {
           error: jsonResponse(502, {
             error: {
-              message: "M365 Copilot disengaged from this request (its safety filter declined to answer). Common causes: too many tools, jailbreak-shaped instructions, or pairing a non-default model with the tool agent. Reduce the toolset or use the default model.",
+              message: "M365 Copilot disengaged from this request (its safety filter declined to answer). Common causes: too many tools or jailbreak-shaped instructions. Reduce the toolset or use the default model.",
               type: "disengaged",
             },
           }),
@@ -718,7 +657,6 @@ export async function handleChatCompletion(
         session.newConversation();
         text = formatMessages(body.messages, body.tools, body.tool_choice, session.conversationId, framingVariant);
         inputImages = imageUrls(body.messages);
-        originalText = text;
         log.info(`Upstream InternalError — re-sending the whole request in a fresh conversation (attempt ${attempt + 1}/${MAX_RETRIES})`);
         await new Promise(r => setTimeout(r, SHORT_RETRY_DELAY_MS));
         continue;
@@ -726,7 +664,7 @@ export async function handleChatCompletion(
 
       // Empty response. Only an at-limit throttle warrants treating this as rate
       // limiting; otherwise it's a different failure (content filter, an invalid
-      // agent/session, a transient upstream error) where a long escalating
+      // session, a transient upstream error) where a long escalating
       // backoff is futile and reads as a silent hang. Fail fast after a couple of
       // quick retries instead.
       const t = copilotStream.throttle;
@@ -734,29 +672,12 @@ export async function handleChatCompletion(
         return { error: rateLimitResponse(t) };
       }
       if (attempt < MAX_RETRIES) {
-        // A dead/deleted agent returns an instant empty reply (throttle: null).
-        // Re-resolve the agent once before retrying so a long-lived host
-        // self-heals from the deleted-agent trap instead of looping on empties.
-        if (!agentRefreshed) {
-          agentRefreshed = true;
-          const agentChanged = await session.refreshAgent();
-          if (agentChanged) {
-            // The cached agent was stale/deleted and has been re-resolved.
-            // Resend the original prompt to the fresh agent — a bare "continue"
-            // would have no context since the dead agent processed nothing.
-            log.info("Agent re-resolved after empty reply, resending original prompt");
-            text = originalText;
-            await new Promise(r => setTimeout(r, SHORT_RETRY_DELAY_MS));
-            continue;
-          }
-        }
         log.info(`Empty upstream response, quick retry in ${SHORT_RETRY_DELAY_MS / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})`);
         await new Promise(r => setTimeout(r, SHORT_RETRY_DELAY_MS));
         text = "Please continue."; // M365 already has context
       } else {
         // A model served only on a premium account, on a non-premium one (Opus
-        // 4.8: BotConnection, `InternalError`, every time, with the agent and
-        // without — §24, §36). Not a throttle, so it doesn't feed the degradation
+        // 4.8: BotConnection, `InternalError`, every time — §24, §36). Not a throttle, so it doesn't feed the degradation
         // backoff; say what it is instead of "empty response".
         if (isPremiumOnlyModel(model) && copilotStream.result?.value === "InternalError") {
           log.info(`${model}: InternalError on every attempt — premium-only model on a non-premium account?`);
@@ -1208,13 +1129,13 @@ function turnBudgetHoldResponse(hold: TurnBudgetHold): Response {
 }
 
 /** Empty upstream reply that is NOT an at-limit throttle — a distinct failure
- *  (content filter, invalid agent/session, transient error) we surface clearly
+ *  (content filter, invalid session, transient error) we surface clearly
  *  instead of hanging on a long retry loop. */
 function emptyResponseResponse(throttle: { current: number; max: number } | null): Response {
   const detail = throttle ? ` (throttle ${throttle.current}/${throttle.max})` : "";
   return jsonResponse(502, {
     error: {
-      message: `M365 Copilot returned an empty response${detail} — likely a content filter, an invalid agent/session, or a transient upstream error.`,
+      message: `M365 Copilot returned an empty response${detail} — likely a content filter, an invalid session, or a transient upstream error.`,
       type: "upstream_empty_response",
     },
   });

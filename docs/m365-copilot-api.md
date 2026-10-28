@@ -531,6 +531,8 @@ Two traps for anyone else doing this:
 
 ## 10. Tool calling & Copilot Studio agents
 
+> **History (2026-10-28):** the proxy no longer creates or attaches a Copilot Studio agent. `agent.ts`, the Power Platform/BAP token scopes, `M365_FORCE_AGENT` and the bot-managing probe scripts were removed: it created bots in the user's tenant, and basic accounts can't publish one (403 "requires Copilot extensibility"). Every request is now plain chat (`threadLevelGptId: {}`) and tool calling relies on the fenced/shell framing alone. What follows documents the protocol as it was measured.
+
 M365 Copilot has **no native `tool_calls`**. We emulate it:
 
 1. Inject tool definitions into the prompt as compact text.
@@ -661,11 +663,10 @@ Evidence (`scripts/dataverse-bot-probe.mjs`, with a `<org>.crm4.dynamics.com/.de
 
 | File | Responsibility |
 |---|---|
-| `packages/core/src/auth.ts` | MSAL PKCE, silent refresh, automated Playwright login, token-for-scope |
+| `packages/core/src/auth.ts` | MSAL PKCE, silent refresh, interactive Playwright sign-in, token-for-scope |
 | `packages/core/src/copilot.ts` | One-shot WS chat, `decodeJwt`, `MODEL_TONES`, `VARIANTS` |
 | `packages/core/src/session.ts` | Stateful `CopilotSession` (reconnect per turn, reuse ids), SignalR frame handling |
-| `packages/core/src/model.ts` | `ModelSession` — auth + agent + conversation continuity, string-in/stream-out |
-| `packages/core/src/agent.ts` | Copilot Studio agent create/publish, BAP env discovery |
+| `packages/core/src/model.ts` | `ModelSession` — auth + conversation continuity, string-in/stream-out |
 | `packages/core/src/schemas.ts` | Zod schemas for SignalR frames & JWT claims |
 | `packages/proxy-lib/src/handler.ts` | OpenAI ↔ M365 translation, `SessionPool`, delta mode, tool-call parsing, one-call-per-turn, empty-response fail-fast |
 | `packages/core/src/tools.ts` | Tool-definition prompt, real-tool few-shot, `parseToolCalls` (bare + fenced, strips `confidence`/`final`) |
@@ -674,15 +675,9 @@ Evidence (`scripts/dataverse-bot-probe.mjs`, with a `<org>.crm4.dynamics.com/.de
 
 | Script | What it digs |
 |---|---|
-| `listbots-probe.mjs` | Dumps `minimalBots` list — shows `displayName`→`shortBotName` round-trip, existing agents |
-| `agent-model-probe.mjs` | Full `minimalBots` agent definition; hunts for a model field (there is none) |
-| `agent-tone-probe.mjs` | `tone-probe` with the tool agent attached: which tones the agent lets through, judged by self-ID + the `3PDeclarativeAgent` tag. Results depend on the account, so it prints and saves which account ran it. `--baseline` adds the agent-less comparison; `--tones=X,Y@paid` narrows the sweep. 1 thread per cell |
-| `studio-dig.mjs` | Logs into the real Copilot Studio UI (Playwright + TOTP) and **captures every API call** → revealed Dataverse + PVA + ECS layers |
-| `dataverse-bot-probe.mjs` | Queries Dataverse (`<org>.crm4.dynamics.com`) directly — proved our agents aren't Dataverse bots |
 | `proxy-verify.mjs` | End-to-end proxy check (`--agent --multiturn --manytools`) — reproduces disengagement, verifies the tool loop |
 | `frame-dump-probe.mjs` | Sends one chat turn and dumps every field of every WS frame; flags token/usage-shaped keys/values. Hunts for hidden metrics. |
 | `tool-compliance-experiment.mjs` | A/B harness over prompt variants × prompts. Scores tool-call compliance and Disengaged rate per variant. Burns ~30 messages. |
-| `usage-endpoint-hunt.mjs` | Sweeps Sydney/Power Platform/BAP REST endpoints looking for token-usage / context-window data outside the WebSocket. |
 | `variants-bisect.mjs` | Bisects the 40-flag `VARIANTS` query-string list to find which flag controls Disengaged / streaming routing. ~10 messages per target. |
 | `toolformat-experiment.mjs` | Older tool-format A/B (bare JSON vs ```` ```json ```` vs ```` ```tool_call ````); kept around for reference. |
 

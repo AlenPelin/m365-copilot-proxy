@@ -112,15 +112,13 @@ const MODEL_TONES: Record<string, string> = {
   // model". Unlike `Gpt_6_Reasoning` it is NOT entitlement-gated: it serves on
   // the included scenario on premium and non-premium accounts alike (#23,
   // tone-probe 2026-10-02, 4/4 + 2/2), so it stays out of PAID_SCENARIO_TONES.
-  // What depends on the account is the tool agent — see
-  // PREMIUM_ONLY_AGENT_TONES. `Gpt_6_Sol_Chat` is accepted too but self-IDs
-  // as the GPT-5 chat model on both accounts, agent or not, so it isn't mapped.
+  // `Gpt_6_Sol_Chat` is accepted too but self-IDs as the GPT-5 chat model on
+  // both accounts, so it isn't mapped.
   "gpt-6-sol": "Gpt_6_Sol_Reasoning",
 
   // GPT-6.1 Sol ("GPT-6.1 Sol" in the web client). Routed like GPT-6 Sol: the
   // included scenario, where it serves on premium and non-premium accounts
-  // alike, and the tool agent only on a premium account (PREMIUM_ONLY_AGENT_TONES;
-  // tone-probe + agent-tone-probe 2026-10-06, docs §27). The paid scenario
+  // alike (tone-probe 2026-10-06, docs §27). The paid scenario
   // serves it too, but every paid turn spends the `GPT61Sol` priority-access
   // budget (40 a day, 75 a week); included turns don't, so it stays out of
   // PAID_SCENARIO_TONES. Self-IDs as "GPT-6 reasoning model" on both scenarios,
@@ -201,13 +199,13 @@ const PAID_LICENSE_TYPE = "Premium";
  * Tones that only serve under the paid scenario.
  *
  * Membership means ENTITLEMENT and nothing else. It is not a proxy for "is
- * metered", "needs lean framing" or "goes without the tool agent":
+ * metered" or "needs lean framing":
  * `Claude_Opus` happens to be both gated and drawing on a small priority-access
  * budget, but `Gpt_6_Reasoning` is gated and throttled exactly like every other
  * model, with no separate budget. The properties travelled together only while
  * Opus was the sole member, so nothing downstream should infer one from the
- * other — `defaultFramingForTone`, `parsePriorityAccessExhaustion` and
- * `toneUsesToolAgent` each decide for themselves.
+ * other — `defaultFramingForTone` and `parsePriorityAccessExhaustion` each
+ * decide for themselves.
  *
  * A model ID can opt out: `claude-opus-4.8` is the same tone on the included
  * scenario (INCLUDED_SCENARIO_MODELS), and isn't metered.
@@ -284,157 +282,11 @@ export function isIncludedOpusModel(model: string): boolean {
     (getToneForModel(model) === "Claude_Opus" && INCLUDED_OPUS_PATTERN.test(model));
 }
 
-// --- Which tool requests carry the Copilot Studio tool agent ------------------
-//
-// The proxy attaches its declarative tool agent to tool requests, because the
-// GPT chat path won't act without it. Some tones must NOT get it:
-//
-// - Claude tones tool-call reliably agent-less (F23), and a non-premium
-//   account's agent path doesn't serve Claude at all — a dead route
-//   (BotConnection, `result: InternalError`), hypotheses §22 F44. The
-//   exception is `Claude_Opus` (AGENT_CLAUDE_TONES).
-// - `Gpt_6_Reasoning` doesn't serve with the agent attached on any account:
-//   the same dead route, 4/4 across a premium and a non-premium account, while
-//   the same tone agent-less answers as GPT-6 (§22 F45, #41). Its bench score
-//   (24/30, §17) was measured agent-less.
-// - Tones in PREMIUM_ONLY_AGENT_TONES take the agent only on a premium
-//   account; on a non-premium one it's the same dead route, learned at runtime.
-//
-// Listed by exact tone. Check a new tone with `scripts/agent-tone-probe.mjs`
-// on BOTH kinds of account before deciding which side it belongs on.
-export const AGENTLESS_TOOL_TONES: ReadonlySet<string> = new Set([
-  "Gpt_6_Reasoning",
-]);
-
-/**
- * Claude tones that DO take the tool agent; every other `Claude_*` tone goes
- * agent-less.
- *
- * - `Claude_Opus`: both models serve either way on a premium account, and take
- *   the agent. On the included scenario (`claude-opus-4.8`, Opus 4.8) agent-less
- *   tool-calls as well on relay_batch, the shipped framing (30/30 each, 2.60 vs
- *   2.53 turns per task, p = 0.80), but has its own code interpreter, and
- *   without a framing that steers it out it works there instead of in the
- *   harness: `baseline` solved 1/10 agent-less, 7 sandbox turns, vs 8/10 with
- *   the agent (docs §36). Opus 4.5, the included model before it, served ONLY
- *   with the agent (§24). On the paid scenario (`claude-opus`, Opus 5.5) the
- *   agent keeps both Opus models on the same path and the same framing.
- *   There is no agent-less fallback to learn (it isn't in
- *   PREMIUM_ONLY_AGENT_TONES): a non-premium account can't reach either model
- *   at all — the paid scenario is unlicensed there (F46), and the included one
- *   is dead with and without the agent (isPremiumOnlyModel).
- *
- * Not `Claude_Sonnet` or `Claude_Sonnet_5` (docs §30, benched on a premium
- * account, where their agent route serves). The agent takes Sonnet 4.6,
- * Sonnet 5 and Sonnet 5.5 out of their own sandboxes, but costs more than
- * that's worth: Sonnet 5 (`Claude_Sonnet_5`, paid) reads
- * the agent's enterprise tools against the harness and refuses it (10/20 vs
- * 19/20 agent-less); Sonnet 4.6 (`Claude_Sonnet`, included) solves the same
- * but spends one more turn per real-pi run (4.4 vs 3.5), using pi's `edit`
- * where relay_batch merges fix and check into one shell call; Sonnet 5.5
- * (`Claude_Sonnet`, paid) gains nothing measurable either way.
- */
-export const AGENT_CLAUDE_TONES: ReadonlySet<string> = new Set([
-  "Claude_Opus",
-]);
-
-/**
- * Tones whose agent route serves only on a PREMIUM account (a paid Microsoft
- * 365 Copilot seat). On a non-premium account the agent-attached turn is a
- * dead route — BotConnection apology, final `result: InternalError`, no
- * content — while the same tone agent-less serves normally.
- *
- * - `Gpt_6_Sol_Reasoning`: agent attached, premium serves GPT-6 on both
- *   scenarios (4/4), non-premium is dead (2/2) (#23, agent-tone-probe
- *   2026-10-02).
- * - `Gpt_61_Sol_Reasoning`: the same split — agent attached, premium serves on
- *   both scenarios (8/8), non-premium is dead on both accounts (3/3)
- *   (agent-tone-probe 2026-10-06, docs §27).
- *
- * Nothing on the token says which kind of account this is, so the proxy finds
- * out by trying: the first tool request on such a tone carries the agent, and
- * an `InternalError` with no content marks the route dead for the rest of the
- * process (`noteAgentRouteDead`). The request is re-sent agent-less, so the
- * client never sees the failure. A non-premium account pays one ~3 s dead turn
- * per tone per process; `M365_FORCE_AGENT=0` skips even that.
- *
- * The premium account ALSO gets that exact wire state now and then, as a
- * one-off: same BotConnection apology, same `InternalError`, mid-conversation
- * after the agent had answered (1 in ~250 agent turns, 2026-10-02, §23). So one
- * answered agent turn settles it the other way (`noteAgentRouteAlive`): from
- * then on an `InternalError` is a transient, handled like on any other tone.
- */
-export const PREMIUM_ONLY_AGENT_TONES: ReadonlySet<string> = new Set([
-  "Gpt_6_Sol_Reasoning",
-  "Gpt_61_Sol_Reasoning",
-]);
-
-// What this process has learned about the agent route, per tone. The proxy
-// serves one account, so this is per-account knowledge; a restart re-learns it.
-const deadAgentRoutes = new Set<string>();
-const aliveAgentRoutes = new Set<string>();
-
-/**
- * Record that this account's agent route doesn't serve `tone` (see
- * PREMIUM_ONLY_AGENT_TONES). Returns false, and records nothing, when the route
- * has already answered in this process: then the failure was a transient.
- */
-export function noteAgentRouteDead(tone: string): boolean {
-  if (aliveAgentRoutes.has(tone)) return false;
-  deadAgentRoutes.add(tone);
-  return true;
-}
-
-/** Record that this account's agent route answered for `tone`. */
-export function noteAgentRouteAlive(tone: string): void {
-  aliveAgentRoutes.add(tone);
-}
-
-/** Whether this process has seen the agent route answer for `tone`. */
-export function isAgentRouteAlive(tone: string): boolean {
-  return aliveAgentRoutes.has(tone);
-}
-
-/** Forget everything learned about agent routes. For tests. */
-export function resetAgentRoutes(): void {
-  deadAgentRoutes.clear();
-  aliveAgentRoutes.clear();
-}
-
-/** Whether a tool request on this tone should carry the tool agent. */
-export function toneUsesToolAgent(tone: string): boolean {
-  if (AGENTLESS_TOOL_TONES.has(tone) || deadAgentRoutes.has(tone)) return false;
-  if (/^Claude_/i.test(tone)) return AGENT_CLAUDE_TONES.has(tone);
-  return true;
-}
-
-/**
- * The agent decision for one tool request, with the `M365_FORCE_AGENT`
- * override applied: `1` always attaches it, `0` never does, anything else
- * leaves it to toneUsesToolAgent.
- */
-export function toolRequestUsesAgent(tone: string): boolean {
-  const force = process.env.M365_FORCE_AGENT;
-  if (force === "1") return true;
-  if (force === "0") return false;
-  return toneUsesToolAgent(tone);
-}
-
-/**
- * The agent decision for one request of any kind. Tool requests follow
- * toolRequestUsesAgent; a tool-less request never carries it. Opus 4.5 needed
- * it even then, since the agent was its only route (docs §24); Opus 4.8, which
- * replaced it, serves agent-less too (§36).
- */
-export function requestUsesAgent(model: string, hasTools: boolean): boolean {
-  return hasTools && toolRequestUsesAgent(getToneForModel(model));
-}
-
 /**
  * Whether this model ID is served only on a premium account (a paid Microsoft
  * 365 Copilot seat), on either path: on any other account every turn is the
- * dead route — BotConnection apology, final `result: InternalError` — with the
- * agent and without it, so there is nothing to fall back to. Today that's the
+ * dead route — BotConnection apology, final `result: InternalError` — so there
+ * is nothing to fall back to. Today that's the
  * included scenario's Opus (Opus 4.8; docs §24, §36).
  */
 export function isPremiumOnlyModel(model: string): boolean {

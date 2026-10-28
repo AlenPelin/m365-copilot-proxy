@@ -14,8 +14,6 @@ const scripted: {
   queue: Array<{ fullText: string; messageType?: string | null; result?: { value: string; errorCode?: string; message?: string }; metering?: Record<string, number> }>;
   /** The model argument of every run() call, in order. */
   models: string[];
-  /** The `useAgent` argument of every run() call, in order. */
-  agentFlags: Array<boolean | undefined>;
   /** The image data URLs of every run() call, in order. */
   images: string[][];
   /** How many times the handler rotated to a fresh conversation. */
@@ -34,7 +32,7 @@ const scripted: {
   awaitTurnBudgetCalls: Array<{ maxWaitMs?: number; signal?: AbortSignal }>;
   /** The `waitForBudget` argument of every run() call, in order (one function per call). */
   budgetWaits: Array<(() => Promise<unknown>) | undefined>;
-} = { deltas: [], runs: 0, texts: [], queue: [], agentFlags: [], newConversations: 0, models: [], images: [], gate: null, signals: [], stoppedAfter: null, budgetHold: null, awaitTurnBudgetCalls: [], budgetWaits: [] };
+} = { deltas: [], runs: 0, texts: [], queue: [], newConversations: 0, models: [], images: [], gate: null, signals: [], stoppedAfter: null, budgetHold: null, awaitTurnBudgetCalls: [], budgetWaits: [] };
 
 vi.mock("@m365-copilot/core", async (importActual) => {
   const actual = await importActual<typeof import("@m365-copilot/core")>();
@@ -45,8 +43,7 @@ vi.mock("@m365-copilot/core", async (importActual) => {
     conversationId = "conv-test";
     reset() {}
     newConversation() { this.conversationId = "conv-test-2"; this.turnCount = 0; scripted.newConversations++; }
-    async refreshAgent() { return false; }
-    async run(text: string, model?: string, signal?: AbortSignal, useAgent?: boolean, images: string[] = [], waitForBudget?: () => Promise<unknown>) {
+    async run(text: string, model?: string, signal?: AbortSignal, images: string[] = [], waitForBudget?: () => Promise<unknown>) {
       if (scripted.gate) await scripted.gate;
       scripted.budgetWaits.push(waitForBudget);
       scripted.models.push(model ?? "");
@@ -56,7 +53,6 @@ vi.mock("@m365-copilot/core", async (importActual) => {
       this.turnCount++; // like the real session: later requests go down the delta path
       scripted.runs++;
       scripted.texts.push(text);
-      scripted.agentFlags.push(useAgent);
       servedBy.push(this.uid);
       const next = scripted.queue.shift();
       const deltas = next ? (next.fullText ? [next.fullText] : []) : scripted.deltas;
@@ -101,7 +97,7 @@ vi.mock("@m365-copilot/core", async (importActual) => {
 const servedBy: number[] = [];
 
 const { handleChatCompletion, SessionPool, ChatCompletionRequest } = await import("./index.js");
-const { resetAgentRoutes, resetPriorityAccessState, TurnBudgetHold } = await import("@m365-copilot/core");
+const { resetPriorityAccessState, TurnBudgetHold } = await import("@m365-copilot/core");
 
 // The proxy remembers a priority-access wall for the process (until the reset);
 // don't let one test's refusal 429 the next test's Opus request.
@@ -528,156 +524,6 @@ describe("Disengage retry keeps a model's <system>-free framing", () => {
   });
 });
 
-describe("which requests carry the tool agent (#41)", () => {
-  const tools = [{ type: "function", function: { name: "bash", parameters: { type: "object", properties: { command: { type: "string" } } } } }];
-
-  /** The `useAgent` flag the handler passed for one request on `model`. */
-  async function agentFlagFor(model: string, withTools = true): Promise<boolean | undefined> {
-    scripted.result = null;
-    scripted.agentFlags = [];
-    scripted.queue = [{ fullText: "```bash\nls\n```" }];
-    const body = ChatCompletionRequest.parse({
-      model, stream: false,
-      ...(withTools ? { tools } : {}),
-      messages: [{ role: "user", content: `list files ${model} ${Math.random()}` }],
-    });
-    const res = await handleChatCompletion(body, new SessionPool());
-    expect(res.status).toBe(200);
-    scripted.queue = [];
-    expect(scripted.agentFlags).toHaveLength(1);
-    return scripted.agentFlags[0];
-  }
-
-  afterEach(() => { delete process.env.M365_FORCE_AGENT; });
-
-  it("sends gpt-6-think-deeper tool requests without the agent", async () => {
-    expect(await agentFlagFor("gpt-6-think-deeper")).toBe(false);
-  });
-
-  it("still sends GPT-5.x tool requests with the agent", async () => {
-    expect(await agentFlagFor("gpt-5.5-think-deeper")).toBe(true);
-    expect(await agentFlagFor("m365-copilot")).toBe(true);
-  });
-
-  it("still sends Claude Sonnet tool requests without it", async () => {
-    expect(await agentFlagFor("claude-sonnet")).toBe(false);
-    expect(await agentFlagFor("claude-sonnet-5")).toBe(false);
-  });
-
-  it("sends both Opus models' tool requests with it (§24, §36)", async () => {
-    expect(await agentFlagFor("claude-opus")).toBe(true);
-    expect(await agentFlagFor("claude-opus-5[1m]")).toBe(true);
-    expect(await agentFlagFor("claude-opus-4.8")).toBe(true);
-    expect(await agentFlagFor("claude-opus-4.5")).toBe(true);
-  });
-
-  it("never attaches it to a request without tools — Opus 4.8 included, which serves agent-less (§36)", async () => {
-    expect(await agentFlagFor("gpt-5.5-think-deeper", false)).toBe(false);
-    expect(await agentFlagFor("claude-opus", false)).toBe(false);
-    expect(await agentFlagFor("claude-opus-4.8", false)).toBe(false);
-    expect(await agentFlagFor("claude-opus-4.5", false)).toBe(false);
-  });
-
-  it("lets M365_FORCE_AGENT=1 put it back", async () => {
-    process.env.M365_FORCE_AGENT = "1";
-    expect(await agentFlagFor("gpt-6-think-deeper")).toBe(true);
-  });
-
-  it("lets M365_FORCE_AGENT=0 take it away", async () => {
-    process.env.M365_FORCE_AGENT = "0";
-    expect(await agentFlagFor("gpt-5.5-think-deeper")).toBe(false);
-  });
-});
-
-describe("GPT-6 Sol: agent on premium, learned fallback on non-premium (#23)", () => {
-  const tools = [{ type: "function", function: { name: "bash", parameters: { type: "object", properties: { command: { type: "string" } } } } }];
-  const DEAD = { fullText: "", result: { value: "InternalError" } };
-  const CALL = { fullText: "```bash\nls\n```" };
-
-  async function send(model = "gpt-6-sol") {
-    scripted.result = null;
-    scripted.texts = [];
-    scripted.agentFlags = [];
-    scripted.newConversations = 0;
-    const body = ChatCompletionRequest.parse({
-      model, stream: false, tools,
-      messages: [{ role: "system", content: "sys" }, { role: "user", content: `list files ${Math.random()}` }],
-    });
-    return respond(body);
-  }
-
-  afterEach(() => {
-    resetAgentRoutes();
-    scripted.queue = [];
-    delete process.env.M365_FORCE_AGENT;
-  });
-
-  it("sends the agent first and keeps it when it serves (premium)", async () => {
-    scripted.queue = [CALL];
-    const res = await send();
-    expect(res.status).toBe(200);
-    expect(scripted.agentFlags).toEqual([true]);
-    expect(scripted.newConversations).toBe(0);
-  });
-
-  it("on the dead route, re-sends the full prompt agent-less in a fresh conversation", async () => {
-    scripted.queue = [DEAD, CALL];
-    const res = await send();
-    expect(res.status).toBe(200);
-    expect((await res.json()).choices[0].message.tool_calls).toHaveLength(1);
-    expect(scripted.agentFlags).toEqual([true, false]);
-    expect(scripted.newConversations).toBe(1);
-    // The retry is the whole request, not a "Please continue." into nothing.
-    expect(scripted.texts[1]).toContain("list files");
-    expect(scripted.texts[1]).toContain("```bash");
-  });
-
-  it("remembers it: the next request goes agent-less from the start", async () => {
-    scripted.queue = [DEAD, CALL];
-    await send();
-    scripted.queue = [CALL];
-    await send();
-    expect(scripted.agentFlags).toEqual([false]);
-    expect(scripted.newConversations).toBe(0);
-  });
-
-  it("treats InternalError as a transient once the agent has answered (premium, §23)", async () => {
-    scripted.queue = [CALL];
-    await send(); // the agent answered: this account is premium
-    scripted.queue = [DEAD, CALL];
-    const res = await send();
-    expect(res.status).toBe(200);
-    // No agent-less switch: the ordinary InternalError retry, which re-sends the
-    // whole request in a fresh conversation — the dropped turn processed nothing,
-    // so "Please continue." would lose the request.
-    expect(scripted.newConversations).toBe(1);
-    expect(scripted.agentFlags).toEqual([true, true]);
-    expect(scripted.texts[1]).not.toBe("Please continue.");
-    expect(scripted.texts[1]).toBe(scripted.texts[0].replace("conv-test<", "conv-test-2<"));
-    scripted.queue = [CALL];
-    await send();
-    expect(scripted.agentFlags).toEqual([true]);
-  });
-
-  it("doesn't touch tones outside PREMIUM_ONLY_AGENT_TONES", async () => {
-    scripted.queue = [DEAD, CALL];
-    const res = await send("gpt-5.5-think-deeper");
-    expect(res.status).toBe(200);
-    // The fresh-conversation InternalError retry, still with the agent.
-    expect(scripted.newConversations).toBe(1);
-    expect(scripted.agentFlags[1]).toBe(true);
-  });
-
-  it("doesn't fall back under M365_FORCE_AGENT=1", async () => {
-    process.env.M365_FORCE_AGENT = "1";
-    scripted.queue = [DEAD, CALL];
-    await send();
-    // The fresh-conversation InternalError retry, still with the agent.
-    expect(scripted.newConversations).toBe(1);
-    expect(scripted.agentFlags).toEqual([true, true]);
-  });
-});
-
 describe("follow-up turns and give-ups (Windows / pi, measured)", () => {
   const tools = [{ type: "function", function: { name: "bash", parameters: { type: "object", properties: { command: { type: "string" } } } } }];
 
@@ -884,13 +730,11 @@ describe("Opus 4.8 on an account that can't serve it (§24, §36)", () => {
   const tools = [{ type: "function", function: { name: "bash", parameters: { type: "object", properties: { command: { type: "string" } } } } }];
 
   afterEach(() => {
-    resetAgentRoutes();
     scripted.queue = [];
   });
 
   async function deadRoute(withTools: boolean) {
     scripted.result = null;
-    scripted.agentFlags = [];
     scripted.newConversations = 0;
     scripted.queue = [DEAD, DEAD, DEAD];
     const body = ChatCompletionRequest.parse({
@@ -905,14 +749,12 @@ describe("Opus 4.8 on an account that can't serve it (§24, §36)", () => {
     expect(scripted.newConversations).toBe(0);
   }
 
-  it("says the model is premium-only instead of 'empty response' on a tool-less (agent-less) request", async () => {
+  it("says the model is premium-only instead of 'empty response' on a tool-less request", async () => {
     await deadRoute(false);
-    expect(scripted.agentFlags).toEqual([false, false, false]);
   });
 
-  it("…and on a tool request, which keeps the agent: agent-less is dead too, so there's no fallback", async () => {
+  it("…and on a tool request", async () => {
     await deadRoute(true);
-    expect(scripted.agentFlags).toEqual([true, true, true]);
   });
 
   it("keeps the generic message for other models' empty InternalErrors", async () => {
@@ -938,7 +780,6 @@ describe("Priority access (Opus 5.5, Sonnet 5.5): OutOfCredits, remembering it, 
     scripted.result = null;
     scripted.texts = [];
     scripted.models = [];
-    scripted.agentFlags = [];
     scripted.newConversations = 0;
     const body = ChatCompletionRequest.parse({
       model, stream, tools,
@@ -996,7 +837,6 @@ describe("Priority access (Opus 5.5, Sonnet 5.5): OutOfCredits, remembering it, 
     expect(json.model).toBe("claude-opus-4.8"); // says who answered
     expect(scripted.models).toEqual(["claude-opus", "claude-opus-4.8"]);
     expect(scripted.newConversations).toBe(1);
-    expect(scripted.agentFlags).toEqual([true, true]);
     expect(scripted.texts[1]).toContain("list files"); // the whole request, not a delta
   });
 
@@ -1088,7 +928,6 @@ describe("Priority access (Opus 5.5, Sonnet 5.5): OutOfCredits, remembering it, 
     expect(res.status).toBe(200);
     expect((await res.json()).model).toBe("claude-sonnet-5");
     expect(scripted.models).toEqual(["claude-sonnet-5.5", "claude-sonnet-5"]);
-    expect(scripted.agentFlags).toEqual([false, false]);
   });
 
   it("remembers an unexpected OutOfCredits under that model alone", async () => {

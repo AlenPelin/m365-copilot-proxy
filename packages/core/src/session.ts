@@ -40,9 +40,7 @@ const STOP_FRAME = JSON.stringify({ arguments: [{}], invocationId: "1", target: 
 // Enabling these optionsSets unlocks M365's real server-side Python sandbox:
 // the model writes and EXECUTES Python and returns true results (verified with a
 // SHA-256 oracle — docs/hypotheses.md §8.9 / scripts/code-interpreter-probe.mjs).
-// Applied only on the agent-less (plain-chat) path: the tool-calling agent wants
-// the model to emit tool JSON, not run its own Python, so we leave that path
-// untouched. Disable with M365_NO_CODE_INTERPRETER=1.
+// Disable with M365_NO_CODE_INTERPRETER=1.
 const CODE_INTERPRETER_OPTIONS_SETS = [
   "cwc_code_interpreter",
   "cwc_code_interpreter_amsfix",
@@ -224,9 +222,7 @@ export class TurnTextComposer {
 export interface NativeActionConfig {
   /** Inline agent definitions (`gptDefinitions[]`) — the no-sideload agent attach. */
   gptDefinitions?: unknown[];
-  /** `clientOverrides.capabilities[]` entries (e.g. {name:"RegisteredPlugins", plugins:[…]}). */
-  capabilities?: unknown[];
-  /** `plugins[]` entries ({Id, Source, Data?}). Merged even when an agent is attached. */
+  /** `plugins[]` entries ({Id, Source, Data?}). Replaces the default Bing plugin. */
   plugins?: unknown[];
   /** Approve consequential (state-mutating) actions too. Default: only read-only ones. */
   autoConfirmAll?: boolean;
@@ -236,14 +232,13 @@ export interface NativeActionConfig {
 export interface ChatTurnOptions {
   /** Request server-side image generation for this turn (§14). Adds the flux
    *  optionsSets + the GenerateGraphicArt allowedMessageType; the generated
-   *  images surface on `stream.images`. Agent-less only. */
+   *  images surface on `stream.images`. */
   generateImages?: boolean;
   /** Uploaded images this turn's message points at (image-input.ts). */
   images?: ImageAnnotation[];
 }
 
 export interface CopilotSessionOptions {
-  agentId?: string;
   /** Reuse an existing session ID across reconnections. */
   sessionId?: string;
   /** Reuse an existing conversation ID so M365 finds the same server-side conversation. */
@@ -303,17 +298,15 @@ export class CopilotSession {
   private sessionId: string;
   private conversationId: string;
   private _turnCount = 0;
-  private agentId?: string;
   private nativeActions?: NativeActionConfig;
   private temporaryChat: boolean;
 
   constructor(options?: CopilotSessionOptions) {
     this.sessionId = options?.sessionId ?? crypto.randomUUID();
     this.conversationId = options?.conversationId ?? crypto.randomUUID();
-    this.agentId = options?.agentId;
     this.nativeActions = options?.nativeActions;
     this.temporaryChat = options?.temporaryChat ?? true;
-    log.info(`New session: sid=${this.sessionId}, cid=${this.conversationId}, agent=${this.agentId ?? "none"}, nativeActions=${!!this.nativeActions}, temporaryChat=${this.temporaryChat}`);
+    log.info(`New session: sid=${this.sessionId}, cid=${this.conversationId}, nativeActions=${!!this.nativeActions}, temporaryChat=${this.temporaryChat}`);
   }
 
   /** Number of turns completed in this session */
@@ -367,7 +360,6 @@ export class CopilotSession {
     if (this.temporaryChat) params.set("disableMemory", "1");
 
     const wsUrl = buildCopilotWebSocketUrl(claims.oid, claims.tid, params);
-    const agentId = this.agentId;
     const sessionId = this.sessionId;
     const conversationId = this.conversationId;
     const nativeActions = this.nativeActions;
@@ -647,13 +639,10 @@ export class CopilotSession {
               source: "officeweb",
               clientCorrelationId: requestId,
               sessionId,
-              // Code interpreter on the agent-less path only (see const above).
-              // M365_EXTRA_OPTIONSSETS (comma-sep) merges in on ANY path — used to
-              // test whether matching the official GUI's rich optionsSets stops the
-              // agent-path "replace X→Y" Disengage (F17/F21). The GUI sends a rich
-              // set + NO agent; we send [] + agent and Disengage.
+              // M365_EXTRA_OPTIONSSETS (comma-sep) merges in extra optionsSets, for
+              // experiments (F17/F21).
               optionsSets: [
-                ...((!agentId && !process.env.M365_NO_CODE_INTERPRETER) ? CODE_INTERPRETER_OPTIONS_SETS : []),
+                ...(!process.env.M365_NO_CODE_INTERPRETER ? CODE_INTERPRETER_OPTIONS_SETS : []),
                 ...(wantImages ? IMAGE_GEN_OPTIONS_SETS : []),
                 ...(process.env.M365_EXTRA_OPTIONSSETS ? process.env.M365_EXTRA_OPTIONSSETS.split(",").map((s) => s.trim()).filter(Boolean) : []),
               ],
@@ -686,9 +675,7 @@ export class CopilotSession {
                 ...(nativeActions ? ACTION_ALLOWED_MESSAGE_TYPES : []),
               ],
               sliceIds: [] as string[],
-              threadLevelGptId: agentId
-                ? { id: agentId, source: "MOS3" }
-                : {},
+              threadLevelGptId: {},
               traceId: requestId,
               isStartOfSession: isFirst,
               clientInfo: {
@@ -720,30 +707,12 @@ export class CopilotSession {
                 clientPreferences: {},
                 ...(images.length ? { messageAnnotations: images } : {}),
               },
-              ...(agentId
-                ? {
-                    gpts: [{
-                      id: agentId,
-                      source: "MOS3",
-                      version: "1.0.0",
-                      clientOverrides: {
-                        // The real capability channel (H8.2/H8.3/H8.7) — RegisteredPlugins,
-                        // ScenarioModels, CodeInterpreter, … ride here per the decompile.
-                        capabilities: nativeActions?.capabilities ?? [],
-                        "deepResearchModels@odata.type": "Collection(String)",
-                      },
-                    }],
-                  }
-                : {}),
               // Inline agent definition — attach a custom action WITHOUT sideloading
               // through Teams/Graph (H-NATIVE-7). Best-effort schema from the decompile;
               // run with M365_DUMP_FRAMES=1 to see what the server accepts.
               ...(nativeActions?.gptDefinitions ? { gptDefinitions: nativeActions.gptDefinitions } : {}),
-              // plugins[]: an explicit native-action list wins; otherwise Bing on the
-              // plain (agent-less) path only, exactly as before.
-              ...(nativeActions?.plugins
-                ? { plugins: nativeActions.plugins }
-                : (!agentId ? { plugins: [{ Id: "BingWebSearch", Source: "BuiltIn" }] } : {})),
+              // plugins[]: an explicit native-action list wins; otherwise Bing.
+              plugins: nativeActions?.plugins ?? [{ Id: "BingWebSearch", Source: "BuiltIn" }],
               // Skill flags that gate the action/confirmation flow — the real client
               // sends these in the chat payload (bundle 8af68b68f4a2 destructure at
               // :9373-9378 → payload :11111). Without them the server has no reason to

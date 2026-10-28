@@ -1,7 +1,5 @@
 import { describe, expect, it, afterEach } from "vitest";
 import {
-  AGENT_CLAUDE_TONES,
-  AGENTLESS_TOOL_TONES,
   getAvailableModels,
   getScenarioForModel,
   getScenarioForTone,
@@ -12,16 +10,8 @@ import {
   priorityAccessFallbackModel,
   isSonnet5Model,
   isSonnet55Model,
-  isAgentRouteAlive,
   isPremiumOnlyModel,
-  noteAgentRouteAlive,
-  noteAgentRouteDead,
   PAID_SCENARIO_TONES,
-  PREMIUM_ONLY_AGENT_TONES,
-  requestUsesAgent,
-  resetAgentRoutes,
-  toneUsesToolAgent,
-  toolRequestUsesAgent,
 } from "./copilot.js";
 
 const INCLUDED = { scenario: "OfficeWebIncludedCopilot", licenseType: "Starter" };
@@ -148,40 +138,7 @@ describe("GPT-6 routing", () => {
   });
 });
 
-describe("which tool requests carry the tool agent", () => {
-  const usesAgent = (model: string) => toneUsesToolAgent(getToneForModel(model));
-
-  it("keeps GPT-6 off the agent — it is a dead route with it attached (#41)", () => {
-    expect(AGENTLESS_TOOL_TONES.has("Gpt_6_Reasoning")).toBe(true);
-    expect(usesAgent("gpt-6-think-deeper")).toBe(false);
-  });
-
-  it("keeps every Claude model but Opus off the agent, mapped or not", () => {
-    for (const id of ["claude", "claude-sonnet", "claude-sonnet-5", "claude-sonnet-5.5", "claude-sonnet-5[1m]", "claude-sonnet-think-deeper", "claude-haiku-9"]) {
-      expect(usesAgent(id)).toBe(false);
-    }
-  });
-
-  it("gives both Opus models the agent — agent-less, Opus 4.8 works in its own sandbox (§24, §36)", () => {
-    expect(AGENT_CLAUDE_TONES.has("Claude_Opus")).toBe(true);
-    for (const id of ["claude-opus", "claude-opus-5", "claude-opus-5.5", "claude-opus-4.8", "claude-opus-4.5", "claude-opus-5[1m]", "claude-opus-4-8-20261001"]) {
-      expect(usesAgent(id)).toBe(true);
-    }
-  });
-
-  it("still gives the GPT-5.x and default models the agent — they won't act without it", () => {
-    for (const id of ["m365-copilot", "quick", "think-deeper", "gpt-5.2", "gpt-5.4", "gpt-5.5", "gpt-5.5-think-deeper", "gpt-5.6", "gpt-5.6-think-deeper"]) {
-      expect(usesAgent(id)).toBe(true);
-    }
-  });
-});
-
 describe("GPT-6 Sol routing (#23)", () => {
-  afterEach(() => {
-    resetAgentRoutes();
-    delete process.env.M365_FORCE_AGENT;
-  });
-
   it("maps gpt-6-sol to Gpt_6_Sol_Reasoning on the INCLUDED scenario — it isn't gated", () => {
     expect(getToneForModel("gpt-6-sol")).toBe("Gpt_6_Sol_Reasoning");
     expect(getAvailableModels()).toContain("gpt-6-sol");
@@ -192,49 +149,9 @@ describe("GPT-6 Sol routing (#23)", () => {
   it("doesn't advertise Gpt_6_Sol_Chat — it serves the GPT-5 chat model", () => {
     expect(getAvailableModels().map(getToneForModel)).not.toContain("Gpt_6_Sol_Chat");
   });
-
-  it("tries the agent first: it serves with it on a premium account", () => {
-    expect(PREMIUM_ONLY_AGENT_TONES.has("Gpt_6_Sol_Reasoning")).toBe(true);
-    expect(toneUsesToolAgent("Gpt_6_Sol_Reasoning")).toBe(true);
-  });
-
-  it("goes agent-less once the account's agent route proved dead, and only for that tone", () => {
-    noteAgentRouteDead("Gpt_6_Sol_Reasoning");
-    expect(toneUsesToolAgent("Gpt_6_Sol_Reasoning")).toBe(false);
-    expect(toneUsesToolAgent("Gpt_5_5_Reasoning")).toBe(true);
-    resetAgentRoutes();
-    expect(toneUsesToolAgent("Gpt_6_Sol_Reasoning")).toBe(true);
-  });
-
-  it("won't mark a route dead once it has answered — a later InternalError is a transient", () => {
-    // A premium account produced the dead route's exact wire state mid-conversation (§23).
-    noteAgentRouteAlive("Gpt_6_Sol_Reasoning");
-    expect(isAgentRouteAlive("Gpt_6_Sol_Reasoning")).toBe(true);
-    expect(noteAgentRouteDead("Gpt_6_Sol_Reasoning")).toBe(false);
-    expect(toneUsesToolAgent("Gpt_6_Sol_Reasoning")).toBe(true);
-    resetAgentRoutes();
-    expect(isAgentRouteAlive("Gpt_6_Sol_Reasoning")).toBe(false);
-    expect(noteAgentRouteDead("Gpt_6_Sol_Reasoning")).toBe(true);
-  });
-
-  it("lets M365_FORCE_AGENT=1 / =0 override the rule either way", () => {
-    noteAgentRouteDead("Gpt_6_Sol_Reasoning");
-    process.env.M365_FORCE_AGENT = "1";
-    expect(toolRequestUsesAgent("Gpt_6_Sol_Reasoning")).toBe(true);
-    expect(toolRequestUsesAgent("Claude_Sonnet")).toBe(true);
-    process.env.M365_FORCE_AGENT = "0";
-    expect(toolRequestUsesAgent("Gpt_5_5_Reasoning")).toBe(false);
-    delete process.env.M365_FORCE_AGENT;
-    expect(toolRequestUsesAgent("Gpt_5_5_Reasoning")).toBe(true);
-    expect(toolRequestUsesAgent("Gpt_6_Sol_Reasoning")).toBe(false);
-  });
 });
 
 describe("GPT-6.1 Sol routing (§27)", () => {
-  afterEach(() => {
-    resetAgentRoutes();
-  });
-
   it("maps gpt-6.1-sol to Gpt_61_Sol_Reasoning on the INCLUDED scenario — every account, unmetered", () => {
     expect(getToneForModel("gpt-6.1-sol")).toBe("Gpt_61_Sol_Reasoning");
     expect(getAvailableModels()).toContain("gpt-6.1-sol");
@@ -242,20 +159,11 @@ describe("GPT-6.1 Sol routing (§27)", () => {
     expect(getScenarioForModel("gpt-6.1-sol")).toEqual(INCLUDED);
     expect(meteredBudgetOf("gpt-6.1-sol")).toBeNull();
   });
-
-  it("takes the agent only on a premium account, learned per tone", () => {
-    expect(PREMIUM_ONLY_AGENT_TONES.has("Gpt_61_Sol_Reasoning")).toBe(true);
-    expect(toneUsesToolAgent("Gpt_61_Sol_Reasoning")).toBe(true);
-    noteAgentRouteDead("Gpt_61_Sol_Reasoning");
-    expect(toneUsesToolAgent("Gpt_61_Sol_Reasoning")).toBe(false);
-    expect(toneUsesToolAgent("Gpt_6_Sol_Reasoning")).toBe(true);
-  });
 });
 
 describe("Opus routing", () => {
   afterEach(() => {
     delete process.env.M365_SCENARIO;
-    delete process.env.M365_FORCE_AGENT;
   });
 
   it("maps the advertised Opus IDs to the Claude_Opus tone", () => {
@@ -318,16 +226,6 @@ describe("Opus routing", () => {
     expect(getScenarioForModel("claude-opus-4.8").scenario).toBe("SomeOtherScenario");
   });
 
-  it("attaches the agent to Opus 4.8's tool requests only — it serves agent-less too, unlike Opus 4.5 (§36)", () => {
-    for (const id of ["claude-opus-4.8", "claude-opus-4.5", "claude-opus"]) {
-      expect(requestUsesAgent(id, false)).toBe(false);
-      expect(requestUsesAgent(id, true)).toBe(true);
-    }
-    // Unchanged for everything else: tool-less requests go agent-less.
-    expect(requestUsesAgent("gpt-5.5", false)).toBe(false);
-    expect(requestUsesAgent("claude-sonnet", true)).toBe(false);
-  });
-
   it("knows which turns are metered — Opus 5.5's and Sonnet 5.5's, not Opus 4.8's or Sonnet 5's", () => {
     for (const id of ["claude-opus", "claude-opus-5", "claude-opus-5.5", "claude-opus-5[1m]"]) expect(meteredBudgetOf(id)).toBe("opus");
     for (const id of ["claude-sonnet-5.5", "claude-sonnet-5-5-20261001"]) expect(meteredBudgetOf(id)).toBe("sonnet-5.5");
@@ -357,11 +255,6 @@ describe("Opus routing", () => {
     process.env.M365_SONNET_FALLBACK_MODEL = "claude-sonnet-5.5";
     expect(priorityAccessFallbackModel("sonnet-5.5")).toBeNull();
     delete process.env.M365_SONNET_FALLBACK_MODEL;
-  });
-
-  it("lets M365_FORCE_AGENT=0 take the agent off Opus 4.8 as well", () => {
-    process.env.M365_FORCE_AGENT = "0";
-    expect(requestUsesAgent("claude-opus-4.8", true)).toBe(false);
   });
 
   it("knows the included Opus is premium-only on either path, and nothing else is", () => {
