@@ -252,6 +252,7 @@ The launcher (`scripts/claude-local.sh`, Windows twin `scripts/claude-local.ps1`
 | `ANTHROPIC_AUTH_TOKEN` | `$M365_PROXY_API_KEY`, else `m365` | any non-empty token skips Claude Code's login; must match the proxy key when one is set |
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL` | `$MODEL` (default `gpt-5.5-think-deeper`) | every model slot, background haiku calls included, goes to one proxy model |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` | no telemetry/update traffic to Anthropic |
+| `CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL` | `1` | Claude Code does not download Anthropic's plugin marketplace (`github.com/anthropics/claude-plugins-official`, ~23 MB) into `.claude-local`. The guard can't block that by itself: it only sees the host, `github.com`, which the agent's own `git` needs |
 | `--tools` | `$TOOLS` (default `Bash,Read,Edit,Write,Glob,Grep`; `TOOLS=` for all) | Claude Code's full tool set is large, and big tool schemas make M365 `Disengage` |
 
 It unsets `ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`.

@@ -35,8 +35,9 @@ unset ANTHROPIC_API_KEY CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX
 # Every Claude Code model slot (incl. the haiku one for background work) → MODEL.
 export ANTHROPIC_MODEL="$MODEL" ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL" ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL" \
   ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL" ANTHROPIC_SMALL_FAST_MODEL="$MODEL"
-# No telemetry/update/error-report traffic to Anthropic from this session.
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+# No telemetry/update/error-report traffic to Anthropic from this session, and no
+# automatic download of Anthropic's plugin marketplace (github.com/anthropics/...).
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1
 
 args=(--model "$MODEL")
 [[ -n "$TOOLS" ]] && args+=("--tools=$TOOLS")

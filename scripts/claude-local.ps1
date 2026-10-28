@@ -25,6 +25,8 @@ foreach ($v in "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEF
   Set-Item "Env:$v" $model
 }
 $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+# No automatic download of Anthropic's plugin marketplace (github.com/anthropics/...).
+$env:CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1"
 
 $claudeArgs = @("--model", $model)
 if ($tools) { $claudeArgs += "--tools=$tools" }
