@@ -310,7 +310,10 @@ retries, throttling) applies unchanged:
   cleaned of M365 web-UI markup (`stripM365Markup`): citation markers
   (`U+E200 cite U+E202 <ref> U+E201`, which show up as "citeturn0file1") are removed and
   `<File>name</File>` chips become the bare name. Tool inputs are not touched (a file body
-  may legitimately contain `<File>`). A `tool_result` that Claude Code cut to a preview
+  may legitimately contain `<File>`). A one-line code block with no language or `text`/`txt`/`plaintext`
+  (GPT models write "around:", ```` ```text line 111``` ````, "for …") becomes inline code,
+  joined into the sentence when it follows "…:" and the next line starts lowercase
+  (`inlineTinyCodeBlocks`); blocks with a language or several lines are kept. A `tool_result` that Claude Code cut to a preview
   (`<persisted-output>`) gets `PERSISTED_OUTPUT_HINT` appended: don't repeat the command,
   narrow it (skip `bin/`, `obj/`, `node_modules/`, `.git/`; cap with `head`). `finish_reason`
   `tool_calls` → `stop_reason: "tool_use"`, `length` → `max_tokens`, else `end_turn`;

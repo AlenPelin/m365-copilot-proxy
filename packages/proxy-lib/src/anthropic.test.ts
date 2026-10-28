@@ -18,6 +18,7 @@ const {
   fromOpenAIChatResponse,
   resolveM365Model,
   stripM365Markup,
+  inlineTinyCodeBlocks,
   toOpenAIChatRequest,
 } = await import("./anthropic.js");
 const { createApp } = await import("./index.js");
@@ -232,5 +233,20 @@ describe("oversized tool results", () => {
     }));
     expect(String(t.messages[2].content)).toContain("bin/, obj/");
     expect(t.messages[4].content).toBe("/repo");
+  });
+});
+
+describe("inlineTinyCodeBlocks", () => {
+  const B = "```";
+  it("joins a one-line plain block into the sentence around it (seen live)", () => {
+    const text = `### 3. Service\n\n${B}text\nsrc/Services/InventoryItemService.cs\n${B}\n\naround:\n\n${B}text\nline 111\n${B}\n\nfor exception/status-code translation.`;
+    expect(inlineTinyCodeBlocks(text)).toBe(
+      "### 3. Service\n\n`src/Services/InventoryItemService.cs`\n\naround: `line 111` for exception/status-code translation.");
+  });
+  it("leaves real code blocks alone", () => {
+    const cs = `Fix it:\n\n${B}csharp\nvar x = 1;\n${B}`;
+    const multi = `Output:\n\n${B}text\nline one\nline two\n${B}`;
+    expect(inlineTinyCodeBlocks(cs)).toBe(cs);
+    expect(inlineTinyCodeBlocks(multi)).toBe(multi);
   });
 });

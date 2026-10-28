@@ -243,6 +243,22 @@ export function stripM365Markup(text: string): string {
     .replace(/[ \t]+$/gm, "");
 }
 
+/**
+ * GPT models in M365 put single values in their own plain code block ("around:",
+ * ```text line 111```, "for exception/status-code translation."), which Claude
+ * Code shows as three separate paragraphs. Turn a one-line block with no language
+ * or `text`/`txt`/`plaintext` into inline code, joined into the sentence when it
+ * follows "…:" (and the sentence after it, when that starts lowercase). Blocks with
+ * a real language or more than one line are left alone. Text blocks only.
+ */
+export function inlineTinyCodeBlocks(text: string): string {
+  const tiny = "```(?:text|txt|plaintext)?\\n([^\\n`]{1,100})\\n```";
+  return text
+    .replace(new RegExp(`([^\\n]*:)\\n\\n${tiny}(?:\\n\\n([a-z][^\\n]*))?`, "g"),
+      (_m, before: string, code: string, after?: string) => `${before} \`${code.trim()}\`${after ? ` ${after}` : ""}`)
+    .replace(new RegExp(`^${tiny}$`, "gm"), (_m, code: string) => `\`${code.trim()}\``);
+}
+
 /** Translate one finished OpenAI chat response into an Anthropic message. */
 export function fromOpenAIChatResponse(payload: any, requestedModel: string, stopSequences?: string[]): AnthropicMessageResponse {
   const choice = payload?.choices?.[0] ?? {};
@@ -251,7 +267,7 @@ export function fromOpenAIChatResponse(payload: any, requestedModel: string, sto
   let stopHit: string | null = null;
 
   if (typeof message.content === "string" && message.content.trim()) {
-    const { text, hit } = applyStopSequences(stripM365Markup(message.content), stopSequences);
+    const { text, hit } = applyStopSequences(inlineTinyCodeBlocks(stripM365Markup(message.content)), stopSequences);
     stopHit = hit;
     if (text) content.push({ type: "text", text });
   }
