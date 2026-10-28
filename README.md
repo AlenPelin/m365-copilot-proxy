@@ -1,9 +1,5 @@
 # m365-copilot-proxy
 
-Use Microsoft 365 Copilot as an LLM backend for OpenAI-compatible coding agents like [pi](https://pi.dev/) and [OpenClaw](https://docs.openclaw.ai/), and for [Claude Code](https://code.claude.com/) through an Anthropic Messages endpoint. Wraps M365 Copilot's WebSocket/SignalR API in an OpenAI-compatible (and Anthropic-compatible) interface with tool calling support.
-
-> **Want the gory protocol details?** See [docs/m365-copilot-api.md](docs/m365-copilot-api.md) — a full write-up of M365 Copilot's undocumented WebSocket API: auth, SignalR frames, tones/models, throttling, the "Disengaged" filter, and the Copilot Studio agent trick that makes tool calling work.
-
 ## Start here (new users)
 
 ### What this project does
@@ -50,6 +46,8 @@ separate OpenAI or Anthropic bill.
 
 Expect it to be slower than a real API (10–30 s per reply on the thinking models), and keep
 the agent's tool set small: big tool lists make M365 refuse to answer (`Disengaged`).
+
+> **Want the gory protocol details?** See [docs/m365-copilot-api.md](docs/m365-copilot-api.md) — a full write-up of M365 Copilot's undocumented WebSocket API: auth, SignalR frames, tones/models, throttling, the "Disengaged" filter, and the Copilot Studio agent trick that makes tool calling work.
 
 ### How it protects your data
 
