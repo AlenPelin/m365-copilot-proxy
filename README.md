@@ -164,6 +164,15 @@ it scored 0/5 on real agentic tasks; see [hypotheses §9](docs/hypotheses.md)):
   the whole call. The fence then counts as unreadable and the model is asked again (next item),
   instead of the harness getting a value of the wrong shape that passes its required-param
   check (port of ghostinator def9700).
+- **Array/object params as a YAML block** (`parseYamlBlockValue` in `fenced.ts`, #50): under an
+  empty `edits:` line the model may write an indented YAML list or mapping (Sonnet 4.6's habit
+  in pi). The subset read: sequences (dashes indented or at the key's column), mappings, double-
+  and single-quoted and plain scalars, `|` / `>` block scalars (with `-` / `+`), and JSON values.
+  Mapping values stay strings (`oldText: 5` is `"5"`). A plain key can't start with `{` or `[`,
+  and a `[...]` / `{...}` value that isn't JSON is unreadable: YAML flow syntax
+  (`- {oldText: "a", newText: "b"}`) is not in the subset, and it used to parse as a mapping
+  keyed `{oldText`. A block that can't be read drops the call (fail closed; asked again as
+  unreadable) instead of becoming `[]` (port of asmartin-ai 9679487).
 - **Asking again for an unreadable call** (`unreadableToolFence` in `fenced.ts`,
   `unreadableToolCall` in `tools.ts`): when a tool turn has no call, and the sandbox re-route
   (below) found nothing, but the reply held a tool fence that couldn't be read (never closed, an

@@ -1248,7 +1248,9 @@ function coerceHeaderValue(value: string, declaredType: string | undefined): unk
 // values, and `|` / `>` block scalars for multi-line text. Mapping values stay
 // strings (no YAML booleans or numbers: `oldText: 5` is the text "5"); scalar
 // list items are left for coerceHeaderValue's array path to see as strings.
-// Anything it can't read returns undefined and the old reading stands.
+// Anything it can't read returns undefined, and parseFencedInner drops the call
+// (fail closed: the model is asked again rather than the harness handed `[]`).
+// YAML flow values (`- {oldText: "a"}`) are not in the subset; only JSON is.
 
 const indentOf = (line: string): number => line.length - line.trimStart().length;
 
@@ -1294,7 +1296,10 @@ function parseYamlNode(lines: string[]): unknown {
   return parseYamlScalar(head);
 }
 
-const YAML_KEY = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s:#'"\-][^:]*?):(?:[ \t]+(.*)|[ \t]*)$/;
+// A plain key can't start with a flow indicator: `{oldText: "a", newText: "b"}`
+// is a YAML flow mapping, not a key named "{oldText" (asmartin-ai 9679487).
+// Quoted keys are the first two alternatives, so nothing readable is lost.
+const YAML_KEY = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s:#'"\-{[][^:]*?):(?:[ \t]+(.*)|[ \t]*)$/;
 
 /** Children of the entry at lines[0]: the lines below it until one at `indent` or less. */
 function childLines(lines: string[], from: number, indent: number): { lines: string[]; next: number } {
@@ -1370,11 +1375,14 @@ function parseYamlScalar(raw: string): unknown {
     }
   }
   if (s.startsWith("'") && s.endsWith("'") && s.length >= 2) return s.slice(1, -1).replace(/''/g, "'");
+  // Flow-shaped but not JSON: a YAML flow mapping or sequence is outside this
+  // subset, and keeping the raw text would hand the harness a corrupted value
+  // that passes every required-param check. Fail closed (asmartin-ai 9679487).
   if ((s.startsWith("[") && s.endsWith("]")) || (s.startsWith("{") && s.endsWith("}"))) {
     try {
       return JSON.parse(s);
     } catch {
-      // not JSON — keep it as text
+      throw new YamlSubsetError(`flow value that isn't JSON: ${s}`);
     }
   }
   return s;
@@ -1461,6 +1469,12 @@ function parseFencedInner(spec: FencedToolSpec, inner: string): Record<string, u
             args[key] = value;
             i = end - 1;
             continue;
+          }
+          // A block was there but can't be read: drop the call rather than ship
+          // `[]` / `{}` for it (asmartin-ai 9679487).
+          if (end > i + 1) {
+            log.error(`tool "${spec.name}": unreadable YAML block for "${key}", dropping the call`);
+            return null;
           }
         }
         const value = coerceHeaderValue(m[2].trim(), type);

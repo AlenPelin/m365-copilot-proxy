@@ -1053,9 +1053,28 @@ describe("array and object params written as a YAML block (#50)", () => {
     expect(args).toEqual({ options: { mode: "fast", retries: "3" }, target: "prod" });
   });
 
-  it("falls back to the old reading when the block isn't YAML it can read", () => {
-    const args = argsOf("```edit\npath: a.py\nedits:\n  - oldText: x\n        newText: misaligned\n```");
-    expect(args.edits).toEqual([]);
+  // Port of asmartin-ai 9679487: unreadable input fails closed.
+  it("drops the call when the block isn't YAML it can read, keeping the text", () => {
+    const text = "```edit\npath: a.py\nedits:\n  - oldText: x\n        newText: misaligned\n```";
+    const { calls, leftover } = parseFencedToolCalls(text, piSpecs);
+    expect(calls).toHaveLength(0);
+    expect(leftover).toContain("misaligned");
+    expect(unreadableToolFence(text, piSpecs)?.name).toBe("edit");
+  });
+
+  it("drops the call rather than reading a YAML flow mapping as a key named {oldText", () => {
+    const { calls } = parseFencedToolCalls('```edit\npath: a.py\nedits:\n  - {oldText: "x", newText: "y"}\n```', piSpecs);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("drops the call for a flow sequence or a non-JSON inline array header", () => {
+    expect(parseFencedToolCalls("```edit\npath: a.py\nedits:\n  - [x, y]\n```", piSpecs).calls).toHaveLength(0);
+    expect(parseFencedToolCalls('```edit\npath: a.py\nedits: [{oldText: "x", newText: "y"}]\n```', piSpecs).calls).toHaveLength(0);
+  });
+
+  it("still reads JSON flow values inside a YAML block", () => {
+    const args = argsOf('```edit\npath: a.py\nedits:\n  - {"oldText": "x", "newText": "y"}\n```');
+    expect(args.edits).toEqual([{ oldText: "x", newText: "y" }]);
   });
 
   it("leaves a string param's indented lines alone, as before", () => {
