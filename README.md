@@ -151,6 +151,19 @@ it scored 0/5 on real agentic tasks; see [hypotheses §9](docs/hypotheses.md)):
   `=` or `{`). No fallback closer is taken while a heredoc in the body (`<<EOF`, `<<'EOF'`,
   `<<-EOF`) is still open, so a cut-off heredoc never runs and clobbers a file. A fence line that
   reads as prose (```` ```Here is the plan ````) is not an opener unless its first word is a tool name.
+- **Argument values follow the tool's JSON schema** (`coerceHeaderValue` / `parseFencedInner`
+  in `fenced.ts`). Every value arrives as text and is converted to the declared type: `boolean`
+  (`true`/`yes`/`y`/`1`/`on` and the false forms, any case), `integer` / `number` (whole-string
+  parse), `array` (JSON, or one plain value as a one-item list, empty as `[]`), `object` (JSON,
+  empty as `{}`). This applies to header lines and to the fence body when the body param is not
+  a string (a tool whose one param is a boolean, number, array or object); a string body keeps
+  its text exactly, whitespace included. A value that doesn't convert stays the original string,
+  so the harness rejects it loudly (`offset: the whole file` stays text, never `null`). One
+  exception, fail closed: an `array` value that starts with `[` but isn't JSON, or an `object`
+  value that isn't a JSON object (a reply cut off mid-value, `edits: [{"oldText":"a",`), drops
+  the whole call. The fence then counts as unreadable and the model is asked again (next item),
+  instead of the harness getting a value of the wrong shape that passes its required-param
+  check (port of ghostinator def9700).
 - **Asking again for an unreadable call** (`unreadableToolFence` in `fenced.ts`,
   `unreadableToolCall` in `tools.ts`): when a tool turn has no call, and the sandbox re-route
   (below) found nothing, but the reply held a tool fence that couldn't be read (never closed, an

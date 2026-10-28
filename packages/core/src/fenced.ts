@@ -1177,6 +1177,16 @@ function makeCall(name: string, args: Record<string, unknown>): ParsedToolCall {
 const TRUE_WORDS = new Set(["true", "yes", "y", "1", "on"]);
 const FALSE_WORDS = new Set(["false", "no", "n", "0", "off"]);
 
+// The one exception is a value that is plainly JSON-shaped and broken: an
+// array/object param whose text starts `[` (or, for an object, anything) but
+// does not parse — a reply cut off mid-value (`edits: [{"oldText":"a","newText":`),
+// or YAML flow syntax (`[{oldText: "a"}]`). Passing that on as a string hands
+// the harness a value of the wrong shape that still clears its required-param
+// check, so the whole call is dropped instead (INVALID_VALUE): the fence then
+// reads as unreadable and the model is asked to send it again. Port of
+// ghostinator def9700 and asmartin-ai 9679487.
+const INVALID_VALUE = Symbol("invalid fenced argument");
+
 function coerceHeaderValue(value: string, declaredType: string | undefined): unknown {
   switch (declaredType) {
     case "boolean": {
@@ -1202,9 +1212,20 @@ function coerceHeaderValue(value: string, declaredType: string | undefined): unk
         // function exists to prevent.
         if (Array.isArray(parsed)) return parsed;
       } catch {
-        // not JSON — fall through to the single-element reading
+        // Broken JSON is not the scalar shorthand for a one-item array.
+        if (value.trimStart().startsWith("[")) return INVALID_VALUE;
       }
       return [value];
+    }
+    case "object": {
+      if (value === "") return {};
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+      } catch {
+        // not JSON
+      }
+      return INVALID_VALUE;
     }
     default:
       return value;
@@ -1442,7 +1463,12 @@ function parseFencedInner(spec: FencedToolSpec, inner: string): Record<string, u
             continue;
           }
         }
-        args[key] = coerceHeaderValue(m[2].trim(), type);
+        const value = coerceHeaderValue(m[2].trim(), type);
+        if (value === INVALID_VALUE) {
+          log.error(`tool "${spec.name}": unreadable ${type} value for "${key}", dropping the call`);
+          return null;
+        }
+        args[key] = value;
         if (headerOnly && (type ?? "string") === "string") open = { key, inline: m[2].trim(), more: [] };
       } else if (open) {
         open.more.push(line);
@@ -1467,7 +1493,16 @@ function parseFencedInner(spec: FencedToolSpec, inner: string): Record<string, u
     args[spec.editPair.search] = sr[1];
     args[spec.editPair.replace] = sr[2];
   } else if (spec.bodyParam !== undefined) {
-    args[spec.bodyParam] = rest;
+    // The body keeps its text as written for a string param; a typed one (a
+    // tool whose single param is a boolean, number, array or object) is
+    // coerced like a header value (ghostinator def9700).
+    const type = spec.parameterTypes[spec.bodyParam];
+    const value = type === undefined || type === "string" ? rest : coerceHeaderValue(rest.trim(), type);
+    if (value === INVALID_VALUE) {
+      log.error(`tool "${spec.name}": unreadable ${type} body for "${spec.bodyParam}", dropping the call`);
+      return null;
+    }
+    args[spec.bodyParam] = value;
   }
 
   return args;
