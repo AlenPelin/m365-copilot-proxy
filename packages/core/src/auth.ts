@@ -557,6 +557,8 @@ async function loginInteractiveForScopes(scopes: string[]): Promise<string> {
     });
     saveCache(app);
     log.info(`Interactive login succeeded as ${result.account?.username}`);
+    // Pairs with the "Waiting up to …" line above; without it the proxy looks hung.
+    console.error(`[m365 auth] Signed in as ${result.account?.username ?? "unknown"} — token saved, browser closing.`);
     return result.accessToken;
   } catch (err: any) {
     await capture(page, "interactive-fail");

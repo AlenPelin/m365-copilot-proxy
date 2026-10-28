@@ -147,7 +147,10 @@ m365-proxy 4141
 A real browser window opens; you complete SSO/MFA by hand exactly as you would in
 Outlook — push, FIDO2, Okta, whatever your tenant enforces. The proxy captures the
 resulting OAuth code and from then on refreshes tokens silently from the MSAL cache,
-so the window is a **one-time cost**, not a per-run prompt. It also kicks in when
+so the window is a **one-time cost**, not a per-run prompt. The console shows
+`[m365 auth] Waiting up to 600s.` while you sign in, then
+`[m365 auth] Signed in as <you> — token saved, browser closing.` and, once the server is
+up, `Listening on http://127.0.0.1:4141`. It also kicks in when
 stored credentials exist but stop working (policy change, MFA method swap).
 
 Contributed by [@EatonWu](https://github.com/EatonWu). Two honest caveats:
