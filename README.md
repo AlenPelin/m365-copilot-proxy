@@ -265,6 +265,14 @@ Tool-call inputs are never cleaned: a command or file body may legitimately cont
 
 Each agent session reuses the same M365 conversation (same `sessionId` + `conversationId`). The WebSocket reconnects per turn but M365 maintains server-side context. This saves quota — the 600 message limit applies per-conversation.
 
+The proxy keeps these conversations in a pool (`SessionPool` in `proxy-lib/src/handler.ts`) and
+drops one after 30 minutes idle (`M365_SESSION_IDLE_TTL_SEC` sets it in seconds). The next request
+of a dropped conversation starts a fresh M365 conversation with the full history. Idle time
+counts from the end of the conversation's last turn, not from when its request came in, and a
+conversation with a turn still running is never dropped: before, a turn longer than the TTL
+(throttle waits, a long tool turn) left its conversation stale the moment it ended, so the next
+tool result opened a new thread (idea from retsimx 1d859d4, d84c9a7).
+
 ### Assembling a turn's text
 
 One M365 turn can hold several bot messages. `TurnTextComposer` (`core/src/session.ts`) keeps
@@ -1007,6 +1015,7 @@ No Power Platform or BAP scopes: the Copilot Studio agent was removed (see
 
 | Variable | Description |
 |---|---|
+| `M365_SESSION_IDLE_TTL_SEC` | Seconds a pooled conversation may sit idle, counted from the end of its last turn, before the proxy drops it (default `1800`, 30 min). A conversation with a turn running is never dropped. The next request of a dropped conversation starts a fresh M365 conversation with the full history ([Conversation reuse](#conversation-reuse)) |
 | `M365_DEBUG` | Set to `1` to enable debug logging to `~/.config/opencode-m365/debug.log` (truncated payloads) |
 | `M365_LOG_FILE` | Debug log name, relative to `~/.config/opencode-m365/` (default `debug.log`; an absolute path is used as is). `M365_LOG_FILE=my/log.log` logs to `~/.config/opencode-m365/my/log.log`. |
 | `M365_TRACE` | Set to `1` for full, untruncated debug logging (every WS frame/prompt/response) — implies `M365_DEBUG`. For reverse engineering. |

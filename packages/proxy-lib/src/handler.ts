@@ -161,7 +161,11 @@ type ParsedMessage = ChatBody["messages"][number];
 interface ConversationState {
   session: ModelSession;
   sentMessageCount: number;
+  /** When the conversation was last used: set by resolve() and again when a
+   *  turn ends (endTurn), so a long turn doesn't count as idle time. */
   lastAccessedAt: number;
+  /** Turns in flight (beginTurn/endTurn). Never evicted while above 0. */
+  activeTurns: number;
   /** Sent ahead of the next tool result when the proxy executed less than the
    *  model wrote last turn (see executedOnlyFirstNote). */
   pendingNote: string | null;
@@ -202,7 +206,13 @@ export function executedOnlyFirstNote(fabricated: boolean, droppedCalls: number,
 
 // --- Session pool: maps conversation fingerprint → M365 session ---
 
-const MAX_IDLE_MS = 30 * 60 * 1000; // evict after 30 min idle
+// Evict a conversation after this long idle: 30 min, or M365_SESSION_IDLE_TTL_SEC.
+// Read on each eviction pass, so it can change without a restart.
+const DEFAULT_IDLE_TTL_SEC = 30 * 60;
+function maxIdleMs(): number {
+  const sec = Number(process.env.M365_SESSION_IDLE_TTL_SEC);
+  return (Number.isFinite(sec) && sec > 0 ? sec : DEFAULT_IDLE_TTL_SEC) * 1000;
+}
 
 export class SessionPool {
   private conversations = new Map<string, ConversationState>();
@@ -253,6 +263,7 @@ export class SessionPool {
       sentMessageCount: 0,
       pendingNote: null,
       lastAccessedAt: Date.now(),
+      activeTurns: 0,
     };
     this.conversations.set(fingerprint, state);
     return state;
@@ -274,10 +285,25 @@ export class SessionPool {
     return simpleHash(`${toolNames}\n${text}`);
   }
 
+  /** A turn starts in this conversation: it can't be evicted until endTurn(). */
+  beginTurn(state: ConversationState): void {
+    state.activeTurns++;
+  }
+
+  /** The turn ended (answer, error or abort): the idle countdown starts now. */
+  endTurn(state: ConversationState): void {
+    state.activeTurns = Math.max(0, state.activeTurns - 1);
+    state.lastAccessedAt = Date.now();
+  }
+
+  // Evicting an in-flight conversation would make its next request start a
+  // fresh M365 conversation (full history, a thread from the budget), so a
+  // conversation with a turn running is skipped (idea from retsimx 1d859d4).
   private evictStale() {
     const now = Date.now();
+    const ttl = maxIdleMs();
     for (const [key, state] of this.conversations) {
-      if (now - state.lastAccessedAt > MAX_IDLE_MS) {
+      if (state.activeTurns === 0 && now - state.lastAccessedAt > ttl) {
         log.info(`Evicting idle conversation ${key}`);
         this.conversations.delete(key);
       }
@@ -718,7 +744,18 @@ export async function handleChatCompletion(
   // `onDelta` streams text to the client live (non-tool path only — see produce's
   // caller). Tool mode ignores it: the raw text is parsed for tool-call fences and
   // can't be shown verbatim, so it stays fully buffered.
+  // Every render path runs produce(), so this is the one place a turn starts
+  // and ends for the pool (idle TTL from the turn's end, no eviction meanwhile).
   async function produce(onDelta?: (delta: string) => void): Promise<Produced> {
+    pool.beginTurn(conv);
+    try {
+      return await produceTurn(onDelta);
+    } finally {
+      pool.endTurn(conv);
+    }
+  }
+
+  async function produceTurn(onDelta?: (delta: string) => void): Promise<Produced> {
   // When tools are present, buffer full response to detect tool calls
   if (hasTools) {
     // A <tool_response> the model wrote itself is a stop sequence: everything
@@ -898,7 +935,7 @@ export async function handleChatCompletion(
     conv.sentMessageCount = body.messages.length;
     return { kind: "text", text: result.fullText };
   }
-  } // end produce()
+  } // end produceTurn()
 
   // --- Render: JSON (non-stream) or an early-flushed SSE stream (stream) ---
   const includeUsage = !!body.stream_options?.include_usage;

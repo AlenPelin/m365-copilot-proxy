@@ -1122,3 +1122,65 @@ describe("stopping a turn that writes its own <tool_response> (early stop)", () 
     expect(JSON.parse(msg.tool_calls[0].function.arguments).command).toBe("ls");
   });
 });
+
+describe("session pool idle TTL (idea from retsimx 1d859d4, d84c9a7)", () => {
+  const MIN = 60_000;
+  const ask = (pool: InstanceType<typeof SessionPool>, content: string) =>
+    handleChatCompletion(ChatCompletionRequest.parse({ model: "m365-copilot", stream: false, messages: [{ role: "user", content }] }), pool).then((r) => r.json());
+
+  afterEach(() => {
+    scripted.gate = null;
+    delete process.env.M365_SESSION_IDLE_TTL_SEC;
+    vi.useRealTimers();
+  });
+
+  it("never evicts a conversation whose turn is still running", async () => {
+    scripted.queue = [];
+    scripted.deltas = ["ok"];
+    scripted.fullText = "ok";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const pool = new SessionPool();
+    let release!: () => void;
+    scripted.gate = new Promise<void>((r) => { release = r; });
+    const long = ask(pool, `long ${Math.random()}`);
+    vi.setSystemTime(Date.now() + 31 * MIN); // the turn outlives the 30-min TTL
+    const other = ask(pool, `other ${Math.random()}`); // its resolve() runs the eviction
+    expect(pool.size).toBe(2);
+    release();
+    await Promise.all([long, other]);
+  });
+
+  it("counts the idle time from the end of the turn, not from its start", async () => {
+    scripted.queue = [];
+    scripted.deltas = ["ok"];
+    scripted.fullText = "ok";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const pool = new SessionPool();
+    let release!: () => void;
+    scripted.gate = new Promise<void>((r) => { release = r; });
+    const long = ask(pool, `long ${Math.random()}`);
+    vi.setSystemTime(Date.now() + 20 * MIN);
+    release();
+    await long;
+    scripted.gate = null;
+    vi.setSystemTime(Date.now() + 20 * MIN); // 40 min after it started, 20 after it ended
+    await ask(pool, `other ${Math.random()}`);
+    expect(pool.size).toBe(2);
+    vi.setSystemTime(Date.now() + 11 * MIN); // 31 min after it ended
+    await ask(pool, `third ${Math.random()}`);
+    expect(pool.size).toBe(2); // the first one went, the third came
+  });
+
+  it("takes the TTL from M365_SESSION_IDLE_TTL_SEC", async () => {
+    scripted.queue = [];
+    scripted.deltas = ["ok"];
+    scripted.fullText = "ok";
+    process.env.M365_SESSION_IDLE_TTL_SEC = "60";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const pool = new SessionPool();
+    await ask(pool, `one ${Math.random()}`);
+    vi.setSystemTime(Date.now() + 61_000);
+    await ask(pool, `two ${Math.random()}`);
+    expect(pool.size).toBe(1);
+  });
+});
