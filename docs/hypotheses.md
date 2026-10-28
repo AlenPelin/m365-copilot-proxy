@@ -98,6 +98,8 @@ than "we eyeballed one run." See §M (Methods) for the experimental rig.
   turn (F93); with it set on the proxy alone, 144 pi turns in 40 min, 42 at the floor, no throttle (F94);
   the bucket doesn't refill at 00:00Z like the priority-access budgets: without it, the account
   throttled 31 turns after 00:00Z (F95)
+- §40 — dropped tool calls (port of upstream PR #71 by NecmiKural): the scanner reads every fence shape
+  the models write, and the proxy asks once again for a call that still can't be read (F97)
 
 ---
 
@@ -5695,3 +5697,36 @@ token total as the trigger is still not separated.
 Cost: one new conversation per re-anchor (F13's thread-rate throttle counts those).
 **Falsifier:** run A again with the threshold on; recall should hold at turn 11+. Also untested:
 whether the turn count or the token total is what triggers the loss (A grew both together).~~
+
+---
+
+## 40. Oct 29 2026 — dropped tool calls: every fence shape, and asking again for the rest (port of upstream PR #71)
+
+Credit: upstream PR #71 (NecmiKural, "read every fence shape the models write; ask again for a call
+that can't be read"). Its evidence is upstream's §40 F103; summary here.
+
+### F97 — eight fence shapes dropped or changed a call; a ninth (closer with prose glued on) dropped 3 of 1,153 real replies 🟢
+**Probe** (upstream, model-free): `parseToolCalls` with pi's tools. Dropped before: ```` ```Bash ````,
+```` ``` bash ````, `~~~bash`, ```` ```bash title="x" ````, a one-line ```` ```bash ls -la``` ````, a closer
+with text after it, a fence never closed. Changed: a ```` ````bash ```` block kept a stray backtick
+line, and an indented block kept its indentation. In 1,153 logged real pi replies a ninth shape
+appeared: the closer with the next sentence glued on (```` ```Raporu hazırlayabilmem için… ````),
+3 dropped calls.
+
+**Fix (ported).** `scanFences` follows CommonMark fence rules (backtick or tilde, closer at least as
+long as the opener, same-length opener nests, info string's first word is the tool name, indented
+body loses the opener's indent); tool names match case-insensitively when only one tool fits;
+fallback closers (glued closer, closer with prose glued on) only when nothing else closes the block,
+and never while a heredoc in the body is still open; a prose line starting with ``` is no opener
+unless its first word names a tool. `unreadableToolFence` names what still can't be read (unclosed
+tool fence, edit fence without SEARCH/REPLACE markers, a reply that is only a one-line fence), and
+the handler asks once in the same conversation to resend it, saying the model may reply without it
+(`M365_NO_FENCE_RETRY=1` off). The forcing (confab) retry is skipped after a re-ask.
+
+**In this branch:** the sandbox re-route (`sandboxCommandAsShellCall`) runs first; the re-ask fires
+only when that found nothing either.
+
+**Evidence (upstream):** old vs new parser over 900 distinct replies on disk: 897 same calls, the
+other 3 are the dropped calls, now read; no whole reply flagged as unreadable. Scripted-model pi run:
+the unclosed call was asked for again and ran. **Not covered:** no live A/B of the re-ask, and no
+Claude replies in the corpus.

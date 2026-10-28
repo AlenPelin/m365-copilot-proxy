@@ -133,6 +133,23 @@ it scored 0/5 on real agentic tasks; see [hypotheses §9](docs/hypotheses.md)):
   (scalar args as `key: value` header lines, one free-form body arg as the fence body,
   `old`/`new` edits as aider-style `SEARCH/REPLACE` diffs)
 - The proxy/handler parses that and converts it to OpenAI `tool_calls` format
+- **Fence shapes the parser reads** (`scanFences` in `core/src/fenced.ts`, CommonMark rules;
+  upstream PR #71): backtick or `~~~` fences; 4+ backtick fences (the closer must be at least as
+  long as the opener, and a same-length opener inside an open block nests); an indented fence
+  (the body loses the opener's indentation); extra info-string words like `title="x"` (only the
+  first word names the tool); tool names matched ignoring case when exactly one tool fits
+  (```` ```Bash ````). Fallback closers, used only when nothing else closes the block: a closer
+  glued to the last line, and a closer with prose glued on (```` ```Then run… ````, 3+ words, no
+  `=` or `{`). No fallback closer is taken while a heredoc in the body (`<<EOF`, `<<'EOF'`,
+  `<<-EOF`) is still open, so a cut-off heredoc never runs and clobbers a file. A fence line that
+  reads as prose (```` ```Here is the plan ````) is not an opener unless its first word is a tool name.
+- **Asking again for an unreadable call** (`unreadableToolFence` in `fenced.ts`,
+  `unreadableToolCall` in `tools.ts`): when a tool turn has no call, and the sandbox re-route
+  (below) found nothing, but the reply held a tool fence that couldn't be read (never closed, an
+  edit fence without its SEARCH/REPLACE markers, or a reply that is only a one-line
+  ```` ```bash ls``` ````), the handler sends one follow-up in the same conversation naming the
+  problem and asking to resend it as one block, or to reply without it. The forcing (confab)
+  retry is skipped after that re-ask. Costs one upstream turn. `M365_NO_FENCE_RETRY=1` turns it off.
 - **Shell-routing (the key lever):** M365's chat-tuned model won't "act as an agent" on
   demand but *will* reflexively write a ```` ```bash ```` block. When the toolset includes a
   shell tool (`bash`/`shell`/`run`/`run_command`/… — any name), the proxy injects "do the
@@ -901,6 +918,7 @@ No Power Platform or BAP scopes: the Copilot Studio agent was removed (see
 | `M365_NO_EARLY_STOP` | Set to `1` to let a tool turn run to its end after the model starts writing its own `<tool_response>`. By default the proxy stops the turn once that invented tail passes `M365_EARLY_STOP_AFTER` chars (the invented part is cut either way), which saves minutes when the model invents the rest of the session (#65) |
 | `M365_EARLY_STOP_AFTER` | How many chars of a model-written `<tool_response>` tail a tool turn may run before the proxy stops it (default `2000`; `0` stops at the tag). M365 keeps a short tail in the conversation and the model seems to follow it: stopping at the tag cost Sonnet 4.6 10% more turns in real pi, the default none measurable ([hypotheses §35](docs/hypotheses.md)) |
 | `M365_INJECT_REPLY_TOOL` | Set to `1` to inject a synthetic `reply(text)` tool. Forces every turn to be a tool call, including pure-prose answers. Cleaner contract for the model, +1 tool to the prompt (watch the Disengaged threshold). Confirmed 5/5 compliance on June 9 2026 ([hypotheses §1.1](docs/hypotheses.md)). |
+| `M365_NO_FENCE_RETRY` | Set to `1` to stop the proxy asking the model once more, in the same conversation, for a tool call it wrote but the parser couldn't read (unclosed fence, edit without SEARCH/REPLACE markers, one-line fence). By default it asks once (one extra upstream turn), and then skips the confab forcing retry for that turn (upstream PR #71) |
 | `M365_NO_CONFAB_RETRY` / `M365_CONFAB_RETRIES` | M365's chat model sometimes produces prose instead of a tool call when it should act — either confabulating an inability ("I can't access the files, please paste them") **or** claiming a completion it never did ("I've replaced the README", with no tool call). By default the proxy detects both and re-prompts forcefully **in the same conversation** (`M365_CONFAB_RETRIES`, default `1`) to force a real action. Set `M365_NO_CONFAB_RETRY=1` to disable. |
 | `M365_NO_BACKOFF` (alias `M365_NO_AUTO_REAUTH`) | Set to `1` to disable degradation backoff. By default, when empty/throttled responses span several **distinct conversations** in a short window (the thread-rate-throttle signature, [F13](docs/hypotheses.md)), the proxy **paces subsequent turns** (a jittered delay before starting new backend conversations) to let the account self-heal. This replaced the old auto-reauth: a fresh login does **not** clear this throttle (it's `oid`-keyed — [§11 H-R1](docs/hypotheses.md)) and raised our detection profile. A single long pi thread never trips the trigger. |
 | `M365_BACKOFF_THRESHOLD` / `M365_BACKOFF_WINDOW_MS` / `M365_BACKOFF_BASE_MS` / `M365_BACKOFF_MAX_MS` | Tune backoff: distinct-conversation empties to trigger (default `3`), the window they must fall in (default `120000`), the initial pacing window (default `90000`), and its escalation cap (default `600000`). |

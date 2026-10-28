@@ -305,6 +305,12 @@ pnpm test:live      # M365_LIVE=1; live tests that hit real M365 (uses quota)
   2,000-char cap costs none measurable and still ends the runaways (hyp §35 F88, F89). The
   after-the-fact cut stays; the stop only ends the turn sooner. `M365_EARLY_STOP_AFTER` sets the cap
   (`0` = at the tag), `M365_NO_EARLY_STOP=1` opts out.
+- **A tool turn without a call can spend extra upstream turns.** Order in `handler.ts`: the sandbox
+  re-route first (no turn); then, if the reply had a tool fence the parser couldn't read
+  (`unreadableToolFence`: never closed, edit without markers, one-line fence), one re-ask in the same
+  conversation (`M365_NO_FENCE_RETRY=1` off; upstream PR #71, hyp §40 F97); otherwise the confab
+  forcing retry. The forcing retry never follows a re-ask: the model was told it may reply without the
+  call. Each retry costs a turn from the F58 bucket, and on Opus a priority-access unit.
 - **Array/object tool params come back in two shapes; the parser reads both.** The tools block shows
   `edits: <edits>`. Opus writes inline JSON (`edits: [{…}]`); Sonnet 4.6 writes a YAML block list under
   an empty `edits:`, which used to arrive as `edits: []` — 44 of its 47 pi `edit` calls, each a wasted
