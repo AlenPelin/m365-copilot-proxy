@@ -350,6 +350,14 @@ assumes a 200k-token context window. It is harmless; M365 accepts more.
   writes and pastes the output back. The proxy turns those commands into real tool calls,
   so it works, but asked about itself the model will say "you executed it on your
   machine". That is expected. Give it tasks, not questions about its abilities.
+- **New user messages get a tool reminder** (`NEW_USER_TURN_REMINDER` in
+  `proxy-lib/src/handler.ts`, all clients, tool requests only). Follow-up turns send M365
+  only the new messages, so in a long session the tool instructions are many turns back.
+  Seen at turn 24 of a Claude Code session: asked "run tests", the model replied "no
+  executable tool is available to me in this turn". Now a follow-up that carries a new user
+  message ends with a one-line reminder that tool blocks still work. The "gave up" detector
+  (`looksLikeConfabulation`) also catches "can't *actually* run …" and "no … tool is
+  available", and then retries once.
 
 Limits: M365 tool calling is prompt-emulated, so it is less reliable than real Claude;
 this is wire compatibility, not an Anthropic model. Ported from the

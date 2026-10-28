@@ -270,7 +270,10 @@ const CONFABULATION_PATTERNS: RegExp[] = [
   // old `to?` made the *t* mandatory, so "can't inspect"/"can't access" slipped
   // through). `execute`/`retrieve`/`fetch` added: the give-up reflex phrases them
   // ("unable to execute or retrieve any output") and they were absent from the list.
-  /(?:unable|not able|can.?t|cannot)\s+(?:to\s+)?(?:access|inspect|list|read|run|execute|retrieve|fetch|locate|see|open)/i,
+  // An adverb may sit in between: "I can't actually run the tests" (seen with Claude Code).
+  /(?:unable|not able|can.?t|cannot)\s+(?:to\s+)?(?:(?:actually|directly|currently|really|just)\s+)?(?:access|inspect|list|read|run|execute|retrieve|fetch|locate|see|open)/i,
+  // "no executable tool is available to me in this turn"
+  /\bno\s+(?:\w+\s+)?tools?\s+(?:is|are)\s+(?:available|accessible)/i,
   /don.?t\s+have\s+access/i,
   /no\s+(?:longer\s+have|access\s+to)/i,   // "no access to" + "no longer have access/the tools"
   /lost\s+(?:access|my\s+access|the\s+ability)/i,

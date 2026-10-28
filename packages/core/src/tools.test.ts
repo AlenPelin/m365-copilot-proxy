@@ -679,3 +679,11 @@ describe("transcript style (which tags wrap the framing and harness system promp
     }
   });
 });
+
+describe("looksLikeConfabulation — Claude Code phrasings", () => {
+  it("catches an adverb between can't and the verb, and 'no … tool is available'", () => {
+    expect(looksLikeConfabulation("I can't actually run the tests from here because the build/test execution happened in your environment.")).toBe(true);
+    expect(looksLikeConfabulation("There is no executable tool available? No: no executable tool is available to me in this turn.")).toBe(true);
+    expect(looksLikeConfabulation("All 153 tests passed and the build is green.")).toBe(false);
+  });
+});

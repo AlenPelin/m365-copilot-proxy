@@ -77,6 +77,11 @@ async function renderImagesMarkdown(images: CapturedImage[]): Promise<string> {
   return parts.join("\n\n");
 }
 
+// Appended to a follow-up turn that carries a new user message (tool requests only).
+export const NEW_USER_TURN_REMINDER =
+  "(Same as before: to run anything or look at files, reply with one tool block — e.g. a ```bash block — " +
+  "and its real output comes back as a <tool_response>. Your tools work in this turn too.)";
+
 // Forcing follow-up sent (in the same conversation) when M365 confabulates an
 // inability to act instead of calling a tool. See the confab-retry loop below.
 const CONFAB_FORCE_PROMPT =
@@ -419,7 +424,11 @@ export async function handleChatCompletion(
   } else {
     const newMessages = body.messages.slice(conv.sentMessageCount);
     inputImages = imageUrls(newMessages);
-    const delta = newMessages.length > 0 ? formatDeltaMessages(newMessages, body.messages) : "";
+    let delta = newMessages.length > 0 ? formatDeltaMessages(newMessages, body.messages) : "";
+    // A new user message in a long tool session arrives bare ("<user>run tests</user>"),
+    // and the tool framing is many turns back. Seen with Claude Code at turn 24: the
+    // model said "no executable tool is available to me in this turn". Remind it.
+    if (hasTools && delta && newMessages.at(-1)?.role === "user") delta += `\n\n${NEW_USER_TURN_REMINDER}`;
     if (delta.length > 0) {
       text = delta;
       // Only a tool result is the thing the note corrects the model about.
