@@ -314,6 +314,33 @@ MODEL=claude-sonnet pnpm run claude     # another proxy model
 pnpm run claude -- -p "write hi"        # extra Claude Code flags pass through
 ```
 
+**A `copilot` command (Windows, optional).** To start it from any folder, put two small
+launchers in a folder on your `PATH` (here `%USERPROFILE%\.local\bin`, which the Claude
+Code installer already adds). They are not part of the repo; change the path if your clone
+lives elsewhere.
+
+`copilot.cmd` (PowerShell and cmd):
+
+```bat
+@echo off
+rem Launch Claude Code against the local M365 proxy (C:\alen\claude-copilot).
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\alen\claude-copilot\scripts\claude-local.ps1" %*
+exit /b %ERRORLEVEL%
+```
+
+`copilot`, no extension (Git Bash):
+
+```sh
+#!/bin/sh
+exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:/alen/claude-copilot/scripts/claude-local.ps1" "$@"
+```
+
+Then `copilot`, `copilot -p "write hi"` or `$env:MODEL="claude-sonnet"; copilot` works
+anywhere. Claude Code runs in the current folder, and its config still comes from the
+repo's `.claude-local`. The launcher runs in its own `powershell.exe`, so the `ANTHROPIC_*`
+variables it sets don't stay in your shell (running `.\scripts\claude-local.ps1` directly
+does leave them set in that PowerShell session). The proxy must already be running.
+
 The launcher (`scripts/claude-local.sh`, Windows twin `scripts/claude-local.ps1`) runs
 `claude` with:
 
