@@ -3,7 +3,7 @@
 # repo-local pi HOME (./.pi-local) so it never touches your real ~/.pi config,
 # sessions, or auth.
 #
-#   pnpm run pi                    # interactive, default model m365-copilot
+#   pnpm run pi                    # interactive, default model gpt-6.1-sol
 #   PORT=24034 pnpm run pi         # point at a proxy on a different port
 #   MODEL=quick pnpm run pi        # different default model
 #   pnpm run pi -- -p "write hi"   # pass a prompt / extra pi flags through
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 PORT="${PORT:-4141}"
-MODEL="${MODEL:-m365-copilot}"
+MODEL="${MODEL:-gpt-6.1-sol}"
 BASE="http://localhost:${PORT}/v1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PIHOME="$ROOT/.pi-local"
@@ -23,7 +23,9 @@ mkdir -p "$PIHOME/.pi/agent"
 # cycling works. baseUrl points at the local proxy.
 cat > "$PIHOME/.pi/agent/models.json" <<EOF
 {"providers":{"m365":{"api":"openai-completions","apiKey":"not-needed","baseUrl":"$BASE","compat":{"supportsDeveloperRole":false,"supportsReasoningEffort":false,"supportsUsageInStreaming":false},"models":[
-  {"id":"m365-copilot","name":"M365 Copilot (default / magic)"},
+  {"id":"gpt-6.1-sol","name":"GPT-6.1 Sol (default)"},
+  {"id":"gpt-5.5-think-deeper","name":"GPT-5.5 Think Deeper"},
+  {"id":"m365-copilot","name":"M365 Copilot (magic)"},
   {"id":"auto","name":"Auto (magic)"},
   {"id":"quick","name":"Quick"},
   {"id":"think-deeper","name":"Think Deeper (reasoning)"},

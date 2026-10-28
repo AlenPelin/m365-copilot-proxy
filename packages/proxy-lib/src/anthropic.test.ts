@@ -110,7 +110,7 @@ describe("Anthropic → OpenAI request", () => {
     expect(resolveM365Model("claude-haiku-4-5-20251001")).toBe("quick");
     delete process.env.M365_CLAUDE_CODE_MODEL;
     const t = toOpenAIChatRequest(AnthropicMessagesRequest.parse({ model: "claude-opus-4-1", messages: [{ role: "user", content: "a" }] }));
-    expect(t.model).toBe("gpt-5.5-think-deeper");
+    expect(t.model).toBe("gpt-6.1-sol");
   });
 });
 

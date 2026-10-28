@@ -790,7 +790,7 @@ export async function handleChatCompletion(
         kind: "error",
         resp: jsonResponse(502, {
           error: {
-            message: "M365 returned a remote Teams or /mnt/data artifact instead of calling the local editing tools. No local file was changed. Retry with gpt-5.5-think-deeper, the recommended model for tool calling.",
+            message: "M365 returned a remote Teams or /mnt/data artifact instead of calling the local editing tools. No local file was changed. Retry with gpt-6.1-sol, the recommended model for tool calling.",
             type: "file_mutation_without_local_tool",
           },
         }),
@@ -1066,7 +1066,7 @@ function priorityAccessResponse(exhaustion: PriorityAccessExhaustion, model: str
           `M365 Copilot's priority access to ${label} is used up for ${when} ` +
           `(resets ${exhaustion.resetsAt.toISOString()}, i.e. midnight UTC` +
           `${exhaustion.window === "week" ? " on Monday" : ""}). ` +
-          `Switch to another model (e.g. claude-sonnet or gpt-5.5-think-deeper) or wait. ` +
+          `Switch to another model (e.g. gpt-6.1-sol or claude-sonnet) or wait. ` +
           `Upstream said: ${exhaustion.message}`,
         type: "rate_limit_error",
         code: "priority_access_exhausted",

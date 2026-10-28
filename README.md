@@ -268,7 +268,8 @@ Point [pi](https://pi.dev/) at it via `~/.pi/agent/models.json`:
         "supportsUsageInStreaming": false
       },
       "models": [
-        { "id": "gpt-5.5-think-deeper", "name": "M365 Copilot (GPT-5.5, recommended)" },
+        { "id": "gpt-6.1-sol", "name": "M365 Copilot (GPT-6.1 Sol, recommended)" },
+        { "id": "gpt-5.5-think-deeper", "name": "M365 Copilot (GPT-5.5)" },
         { "id": "m365-copilot", "name": "M365 Copilot (Auto)" }
       ]
     }
@@ -284,12 +285,12 @@ To let the model see images — a screenshot, a chart the agent drew, a PNG it `
 `"input": ["text", "image"]` to each model entry. pi then sends them as `image_url` parts and the proxy
 uploads them to M365 the way the web client does.
 
-Then run pi (use `gpt-5.5-think-deeper` — the reliable tool-calling model — and keep the
+Then run pi (use `gpt-6.1-sol` — the default and recommended tool-calling model — and keep the
 toolset lean; M365 "disengages" on very large tool payloads, see
 [docs/m365-copilot-api.md](docs/m365-copilot-api.md#the-disengaged-filter)):
 
 ```sh
-pi --models "gpt-5.5-think-deeper" -p --tools read,list,edit,write "your task"
+pi --models "gpt-6.1-sol" -p --tools read,list,edit,write "your task"
 ```
 
 This is verified working end-to-end, including multi-tool calls and real file edits.
@@ -321,7 +322,7 @@ The launcher (`scripts/claude-local.sh`, Windows twin `scripts/claude-local.ps1`
 | `CLAUDE_CONFIG_DIR` | `./.claude-local` | isolated config; your real `~/.claude` login/settings are untouched |
 | `ANTHROPIC_BASE_URL` | `http://127.0.0.1:$PORT` (`PORT` default `4141`) | the local proxy |
 | `ANTHROPIC_AUTH_TOKEN` | `$M365_PROXY_API_KEY`, else `m365` | any non-empty token skips Claude Code's login; must match the proxy key when one is set |
-| `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL` | `$MODEL` (default `gpt-5.5-think-deeper`) | every model slot, background haiku calls included, goes to one proxy model |
+| `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL` | `$MODEL` (default `gpt-6.1-sol`) | every model slot, background haiku calls included, goes to one proxy model |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` | no telemetry/update traffic to Anthropic |
 | `CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL` | `1` | Claude Code does not download Anthropic's plugin marketplace (`github.com/anthropics/claude-plugins-official`, ~23 MB) into `.claude-local`. The guard can't block that by itself: it only sees the host, `github.com`, which the agent's own `git` needs |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `60000` (keeps yours if set) | Claude Code summarises old turns at 60k tokens instead of the 200k it assumes for an unknown model. M365 keeps only about the last 85–90k tokens of a conversation in view: GPT-6.1 Sol lost a planted rule, facts and its tool instructions past that (`docs/hypotheses.md` §39). After a compaction the proxy starts a fresh M365 conversation with the short history |
@@ -377,7 +378,7 @@ retries, throttling) applies unchanged:
 - **Model.** An exact proxy model ID is used as is; so is `claude-m365--<id>` (prefix
   stripped). Any other name — Claude Code's own `claude-sonnet-4-5-…`, `claude-haiku-…` —
   goes to `M365_CLAUDE_CODE_MODEL` if that is a proxy model, else the chat default
-  (`gpt-5.5-think-deeper`). The response's `model` echoes the requested name.
+  (`gpt-6.1-sol`). The response's `model` echoes the requested name.
 - **Response.** Text and tool calls become `text` and `tool_use` blocks. Text blocks are
   cleaned of M365 web-UI markup (`stripM365Markup`): citation markers
   (`U+E200 cite U+E202 <ref> U+E201`, which show up as "citeturn0file1") are removed and
@@ -536,10 +537,10 @@ without NixOS: `nix run github:cramt/m365-copilot-proxy -- 4141`.
 |---|---|---|
 | `gpt-6-think-deeper` | Gpt_6_Reasoning | GPT-6 reasoning. **Needs a paid/premium Copilot seat** (see below); 30/30 on the bench (agent-less, `relay` framing). Defaults to `relay_batch`: 20/20 at 2.1 turns per task (relay: 3.2), 10/10 driving real pi |
 | `gpt-6-sol` | Gpt_6_Sol_Reasoning | GPT-6 Sol ("GPT 6.0 Sol" in the web UI). **Works on every account**, no paid seat needed; Defaults to `relay_batch`: 60/60 on the bench without the (now removed) agent, 30/30 driving real pi, at 2.1 turns per bench task either way |
-| `gpt-6.1-sol` | Gpt_61_Sol_Reasoning | GPT-6.1 Sol ("GPT-6.1 Sol" in the web UI). **Works on every account**. Defaults to `relay_batch`: 40/40 on the bench, 30/30 driving real pi, at 2.2 turns per bench task, and it keeps out of its sandbox, which `gpt-6-sol` doesn't always (see below). **Best choice on a basic account** |
+| `gpt-6.1-sol` | Gpt_61_Sol_Reasoning | GPT-6.1 Sol ("GPT-6.1 Sol" in the web UI). **Works on every account**. Defaults to `relay_batch`: 40/40 on the bench, 30/30 driving real pi, at 2.2 turns per bench task, and it keeps out of its sandbox, which `gpt-6-sol` doesn't always (see below). **The default and recommended model** (when no model is sent, and in the pi / Claude Code launchers) |
 | `gpt-5.6-think-deeper` | Gpt_5_6_Reasoning | GPT-5.6 reasoning — 27/30 on the bench, tied with `gpt-5.5-think-deeper` |
 | `gpt-5.6` / `gpt-5.6-quick` | Gpt_5_6_Chat | GPT-5.6 fast ("GPT 5.6 Quick response" in the web UI). **Weak at tool calling** — 7/30 on the bench (see below) |
-| `gpt-5.5-think-deeper` | Gpt_5_5_Reasoning | **Recommended default for agents/tool-calling** — 26/30 on the bench |
+| `gpt-5.5-think-deeper` | Gpt_5_5_Reasoning | GPT-5.5 reasoning — 26/30 on the bench (measured with the now-removed agent). The default until 2026-10-28 |
 | `gpt-5.5` / `gpt-5.5-quick` | Gpt_5_5_Chat | GPT-5.5 fast — 16/30 on the bench, the strongest benchmarked chat tone |
 | `m365-copilot` / `auto` | magic | Auto-routing — high-variance at tool-calling (confabulates; see below) |
 | `quick` | Gpt_5_5_Chat | Alias of `gpt-5.5` (its old `Gpt_Quick` tone was retired — see below) |
@@ -563,20 +564,19 @@ isn't directly comparable.
 > `*-quick` model ID still works and resolves to the replacement `*_Chat` tone (e.g.
 > `gpt-5.3-quick` → `Gpt_5_3_Chat`), so existing configs need no change.
 
-> ✅ **For tool calling, use `gpt-5.5-think-deeper` (the default when no model is sent).**
-> The fenced/shell-routing path makes this reasoning tone robust:
-> 26/30 on the bench (measured with the Copilot Studio agent, which is now removed; GPT-5.x
-> without it is less tested, and on a basic account it tended to answer from M365's own
-> `/mnt/data` sandbox — there, prefer `gpt-6.1-sol`), tied with `gpt-5.6-think-deeper` and well ahead of every benchmarked
-> chat tone (docs/hypotheses.md §19), and 100% compliance and solve across prompt/toolset
-> sizes in the tool-call harness (§12.10/§12.11). The **default `m365-copilot` (magic) tone is *not* reliable** for
-> tools — it confabulates ("I no longer have access to the filesystem tools") and solves
-> ~0% of real tasks (§12.11); a proxy request with no `model` field already defaults to
-> `gpt-5.5-think-deeper` for this reason.
+> ✅ **For tool calling, use `gpt-6.1-sol` (the default when no model is sent, since
+> 2026-10-28).** It works on every account with no paid seat, scored 40/40 on the bench and
+> 30/30 driving real pi with `relay_batch`, all without the Copilot Studio agent, and keeps out
+> of M365's own `/mnt/data` sandbox (see [GPT-6.1 Sol](#gpt-61-sol-gpt-61-sol--gpt-6-sols-routing-and-the-relay_batch-framing)).
+> It also made real tool calls from Claude Code on a basic account, where
+> `gpt-5.5-think-deeper` tended to answer from the sandbox. `gpt-5.5-think-deeper`, the old
+> default, scored 26/30 on the bench, but that was measured with the agent, which is now
+> removed. The **`m365-copilot` (magic) tone is *not* reliable** for tools — it confabulates
+> ("I no longer have access to the filesystem tools") and solves ~0% of real tasks (§12.11).
 >
 > ⚠️ The **older** reasoning tones (`gpt-5.2`/`gpt-5.3`/`gpt-5.4` `*-think-deeper`, bare
 > `gpt-5.4`) route through M365's `DeepLeo` pipeline, which meta-analyzes the
-> injected prompt and can disengage from tools. Prefer `gpt-5.5-think-deeper`.
+> injected prompt and can disengage from tools. Prefer `gpt-6.1-sol`.
 > See [docs/m365-copilot-api.md](docs/m365-copilot-api.md) §5/§10.
 
 ### GPT-5.6 chat (`gpt-5.6` / `gpt-5.6-quick`) — newer, and worse at agentic work
@@ -619,8 +619,8 @@ none of the Opus advice about rationing turns applies.
 real pi. The default is now `relay_batch`, which asks it to put as much as it can into each block:
 20/20 on the bench at 2.1 turns per task against relay's 3.2, and 10/10 through real pi at 3 turns
 per run (hypotheses §25). `M365_FRAMING_VARIANT` still overrides it.
-`gpt-5.5-think-deeper` remains the recommended default and the no-model fallback, because it needs
-no entitlement: making GPT-6 the default would hand most seats a model they can't reach.
+`gpt-6.1-sol` is the recommended default and the no-model fallback, not GPT-6, because GPT-6
+needs an entitlement most seats don't have; GPT-6.1 Sol needs none.
 
 ### GPT-6 Sol (`gpt-6-sol`) — no entitlement
 
@@ -889,7 +889,7 @@ No Power Platform or BAP scopes: the Copilot Studio agent was removed (see
 | `M365_SCENARIO` / `M365_LICENSE_TYPE` | Override the entitlement the WebSocket is opened under (defaults: `OfficeWebIncludedCopilot` / `Starter`, switching to `OfficeWebPaidCopilot` / `Premium` for the entitlement-gated models — `claude-opus`, `gpt-6-think-deeper`, `claude-sonnet-5` and `claude-sonnet-5.5`; `claude-opus-4.8` and `gpt-6.1-sol` stay on the included one). `scenario` is what gates the model list (and picks Sonnet 4.6 vs 5.5 for the `Claude_Sonnet` tone, Sonnet 4.6 vs 5 for `Claude_Sonnet_5`, Opus 4.8 vs 5.5 for `Claude_Opus`); `licenseType` rides along and unlocks nothing by itself. Forcing the paid scenario on `gpt-6.1-sol` spends its separate GPT-6.1 Sol allowance (40 turns a day, 75 a week), which the proxy doesn't track. |
 | `HOST` / `NITRO_HOST` | Address the server binds to. The `m365-proxy` launcher defaults it to `127.0.0.1`. |
 | `M365_PROXY_API_KEY` | Require this key on every `/v1/*` route except `GET /v1/models`, as `Authorization: Bearer <key>` or `x-api-key: <key>` (constant-time compare; else 401). Unset (default): no check. |
-| `M365_CLAUDE_CODE_MODEL` | Proxy model for `/v1/messages` requests that name a model the proxy doesn't know (Claude Code's own model names). Default: the chat default, `gpt-5.5-think-deeper`. |
+| `M365_CLAUDE_CODE_MODEL` | Proxy model for `/v1/messages` requests that name a model the proxy doesn't know (Claude Code's own model names). Default: the chat default, `gpt-6.1-sol`. |
 | `M365_CACHE_FILE` | Override MSAL token cache location |
 | `M365_SECRETS_FILE` | Only used to find a leftover `secrets.json` and warn you to delete it |
 | `CHROMIUM_PATH` | Path to the Chromium binary for the sign-in window |

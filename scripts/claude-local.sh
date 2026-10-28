@@ -3,7 +3,7 @@
 # with an isolated, repo-local config dir (./.claude-local) so it never touches
 # your real ~/.claude settings, sessions or login.
 #
-#   pnpm run claude                      # interactive, model gpt-5.5-think-deeper
+#   pnpm run claude                      # interactive, model gpt-6.1-sol
 #   MODEL=claude-sonnet pnpm run claude  # another proxy model
 #   PORT=24034 pnpm run claude           # proxy on another port
 #   TOOLS= pnpm run claude               # all of Claude Code's tools (see below)
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 PORT="${PORT:-4141}"
-MODEL="${MODEL:-gpt-5.5-think-deeper}"
+MODEL="${MODEL:-gpt-6.1-sol}"
 # Claude Code's full tool set is large; big tool schemas make M365 Disengage, so
 # advertise only the core coding tools unless TOOLS says otherwise.
 TOOLS="${TOOLS-Bash,Read,Edit,Write,Glob,Grep}"

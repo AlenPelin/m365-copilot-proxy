@@ -5,11 +5,11 @@
 #   $env:MODEL = "claude-sonnet"; .\scripts\claude-local.ps1
 #   .\scripts\claude-local.ps1 -p "write hi"
 #
-# Env: PORT (4141), MODEL (gpt-5.5-think-deeper), TOOLS (Bash,Read,Edit,Write,Glob,Grep;
+# Env: PORT (4141), MODEL (gpt-6.1-sol), TOOLS (Bash,Read,Edit,Write,Glob,Grep;
 # set to "" for all tools), M365_PROXY_API_KEY (if the proxy has one),
 # CLAUDE_GUARD ("0" disables the Anthropic egress guard, scripts/claude-guard.mjs).
 $port  = if ($env:PORT)  { $env:PORT }  else { "4141" }
-$model = if ($env:MODEL) { $env:MODEL } else { "gpt-5.5-think-deeper" }
+$model = if ($env:MODEL) { $env:MODEL } else { "gpt-6.1-sol" }
 $tools = if ($null -ne $env:TOOLS) { $env:TOOLS } else { "Bash,Read,Edit,Write,Glob,Grep" }
 $root  = Split-Path -Parent $PSScriptRoot
 
