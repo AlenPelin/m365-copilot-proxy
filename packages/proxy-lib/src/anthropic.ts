@@ -135,6 +135,12 @@ export function anthropicMessagesToOpenAI(body: AnthropicBody): OpenAIMessage[] 
           ? [{ type: "text", text: b.content }]
           : (b.content ?? []).map((c: AnyBlock) => (c.type === "image" ? imagePart(c) : { type: "text" as const, text: textOf(c) }));
         if (b.is_error) parts.unshift({ type: "text", text: "[tool error]\n" });
+        // Claude Code swaps an oversized result for a file path + 2KB preview. Left
+        // alone, M365 models retry near-identical commands and hit it again (seen:
+        // 14 turns in a .NET repo, `find`/`sed` over bin/ and obj/). Say what happened.
+        if (parts.some((p) => p.type === "text" && p.text.includes("<persisted-output>"))) {
+          parts.push({ type: "text", text: PERSISTED_OUTPUT_HINT });
+        }
         const name = toolNames.get(b.tool_use_id);
         out.push({ role: "tool", tool_call_id: String(b.tool_use_id), ...(name ? { name } : {}), content: packParts(parts) });
       } else pending.push({ type: "text", text: textOf(b) });
@@ -144,6 +150,11 @@ export function anthropicMessagesToOpenAI(body: AnthropicBody): OpenAIMessage[] 
   }
   return out;
 }
+
+export const PERSISTED_OUTPUT_HINT =
+  "\n[note: this output was too large, so only its start is shown above. Don't repeat the command. " +
+  "Narrow it instead: skip build and dependency folders (bin/, obj/, node_modules/, .git/), " +
+  "print only the lines you need, and cap the rest (e.g. `| head -n 200`).]";
 
 function mapToolChoice(choice: AnthropicBody["tool_choice"]) {
   if (!choice || choice.type === "auto") return "auto" as const;

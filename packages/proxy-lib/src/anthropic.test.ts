@@ -217,3 +217,20 @@ describe("stripM365Markup", () => {
     expect((m.content[1] as any).input).toEqual({ content: "<File>keep</File>" });
   });
 });
+
+describe("oversized tool results", () => {
+  it("adds a narrow-the-command hint when Claude Code persisted the output", () => {
+    const t = toOpenAIChatRequest(AnthropicMessagesRequest.parse({
+      model: "x",
+      messages: [
+        { role: "user", content: "go" },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "find src" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "<persisted-output>\nOutput too large (291KB). Full output saved to: x.txt\n\nPreview (first 2KB):\nabc" }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "Bash", input: { command: "pwd" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: "/repo" }] },
+      ],
+    }));
+    expect(String(t.messages[2].content)).toContain("bin/, obj/");
+    expect(t.messages[4].content).toBe("/repo");
+  });
+});

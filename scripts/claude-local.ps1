@@ -28,7 +28,9 @@ $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 # No automatic download of Anthropic's plugin marketplace (github.com/anthropics/...).
 $env:CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1"
 
-$claudeArgs = @("--model", $model)
+# Bash output up to 128k chars inline (Claude Code's max; default 30k). Past that it
+# hands the model only a 2KB preview, which M365 models answer by retrying in a loop.
+$claudeArgs = @("--model", $model, "--settings", (Join-Path $PSScriptRoot "claude-local.settings.json"))
 if ($tools) { $claudeArgs += "--tools=$tools" }
 Write-Host "[claude-local] proxy=$($env:ANTHROPIC_BASE_URL)  model=$model  tools=$(if ($tools) { $tools } else { 'all' })  config=$($env:CLAUDE_CONFIG_DIR)"
 # Egress guard: Anthropic hosts are refused (nothing is sent); Claude Code keeps running

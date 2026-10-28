@@ -39,7 +39,9 @@ export ANTHROPIC_MODEL="$MODEL" ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL" ANTHROPIC_
 # automatic download of Anthropic's plugin marketplace (github.com/anthropics/...).
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1
 
-args=(--model "$MODEL")
+# Bash output up to 128k chars inline (Claude Code's max; default 30k). Past that it
+# hands the model only a 2KB preview, which M365 models answer by retrying in a loop.
+args=(--model "$MODEL" --settings "$ROOT/scripts/claude-local.settings.json")
 [[ -n "$TOOLS" ]] && args+=("--tools=$TOOLS")
 echo "[claude-local] proxy=$ANTHROPIC_BASE_URL  model=$MODEL  tools=${TOOLS:-all}  config=$CLAUDE_CONFIG_DIR"
 # Egress guard: Anthropic hosts are refused (nothing is sent); Claude Code keeps running
