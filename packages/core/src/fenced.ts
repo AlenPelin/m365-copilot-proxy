@@ -966,6 +966,38 @@ function fenceLine(line: string): FenceLine | null {
   return { indent: indent.length, char: run[0], len: run.length, info: after.split(/[ \t]/)[0], bare: after === "" };
 }
 
+// A tool result the model wrote itself (or the transcript's own tag): what
+// follows it is not the body of the call before it.
+const RESULT_TAG = /<(?:tool_response|tool_output|tool_result|assistant)\b/i;
+
+/** Whether, from lines[from], another bare fence line like `bare` (same
+ *  character, at least as long) comes before the next tool-call opener or
+ *  result tag.
+ *
+ *  A bare ``` inside a write/edit block is ambiguous: the call's closer, or the
+ *  opener of a plain code block in the file — the ordinary Markdown way a README
+ *  shows a command. Taken as the closer, a README with a bare code block was
+ *  written cut off at that line, and the rest of it surfaced as prose (retsimx
+ *  2c16c22, live 2026-10-17). So when another bare fence follows, this one is
+ *  read as the inner opener; the last bare fence before the next call is the
+ *  closer. The cost: prose plus a bare-fenced block written after a write call
+ *  ends up in the file. Shell blocks are never read this way. */
+function bareFenceFollows(lines: string[], from: number, bare: FenceLine, isTool: (info: string) => boolean): boolean {
+  for (let j = from; j < lines.length; j++) {
+    const line = lines[j].endsWith("\r") ? lines[j].slice(0, -1) : lines[j];
+    if (RESULT_TAG.test(line)) return false;
+    const f = fenceLine(line);
+    if (!f) {
+      const mid = FENCE_OPEN_MIDLINE.exec(line);
+      if (mid && isTool(mid[2])) return false;
+      continue;
+    }
+    if (!f.bare && isTool(f.info)) return false;
+    if (f.bare && f.char === bare.char && f.len >= bare.len) return true;
+  }
+  return false;
+}
+
 interface FenceBlock {
   info: string;
   inner: string;
@@ -997,7 +1029,10 @@ interface FenceScan {
  *  depth-0 blocks are returned, their body without the opener's indentation
  *  (a block in a list item). Inner fences stay part of their parent's body,
  *  which also lets a write_file carry a body containing balanced fences — the
- *  limitation noted at the top of this file.
+ *  limitation noted at the top of this file. In a write/edit block (any tool
+ *  but the shell) a bare line as long as the opener also nests when another
+ *  bare one follows before the next tool call (bareFenceFollows), so a file
+ *  with a plain ``` code block is written whole.
  *
  *  A glued closer ("ls -la```"), or one with prose glued after it ("```Raporu
  *  hazırlayabilmem için…"), ends a block only when nothing else does by the
@@ -1009,7 +1044,16 @@ interface FenceScan {
  *  swallowed the real tool block after it. A block still open at the end is
  *  returned as `unclosed`: a native-call closer may end it (unclosedToolCall),
  *  and otherwise unreadableToolFence reports it. */
-function scanFences(text: string, isTool: (info: string) => boolean, from = 0): FenceScan {
+function scanFences(text: string, specs: Map<string, FencedToolSpec>, from = 0): FenceScan {
+  const isTool = (info: string): boolean => resolveSpec(specs, info) !== undefined;
+  const shellSpecs = new Set([...SHELL_LANGS].map((l) => specs.get(l)));
+  // Bodies that hold file text (write, edit — any tool but the shell): a bare
+  // ``` line in one may open a plain code block of the file (see bareFenceFollows).
+  const holdsFileText = (info: string): boolean => {
+    const spec = resolveSpec(specs, info);
+    return spec !== undefined && !shellSpecs.has(spec);
+  };
+  const lines = text.slice(from).split("\n");
   const blocks: FenceBlock[] = [];
   const stack: FenceLine[] = [];
   let open: { info: string; start: number; bodyStart: number; indent: number } | null = null;
@@ -1024,7 +1068,8 @@ function scanFences(text: string, isTool: (info: string) => boolean, from = 0): 
     return inner.split("\n").map((l) => l.replace(dent, "")).join("\n");
   };
   let offset = from;
-  for (const raw of text.slice(from).split("\n")) {
+  for (let n = 0; n < lines.length; n++) {
+    const raw = lines[n];
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     const lineEnd = offset + raw.length;
     const f = fenceLine(line);
@@ -1040,7 +1085,13 @@ function scanFences(text: string, isTool: (info: string) => boolean, from = 0): 
       }
     } else {
       const top = stack[stack.length - 1];
-      if (f && f.char === top.char && f.bare && f.len >= top.len) {
+      // A bare line exactly as long as the opener of a write/edit block opens
+      // a plain code block of the file when another such line follows before
+      // the next tool call (bareFenceFollows) — not the call's closer.
+      if (f && f.char === top.char && f.bare && f.len === top.len && stack.length === 1 &&
+          holdsFileText(open.info) && bareFenceFollows(lines, n + 1, f, isTool)) {
+        stack.push(f);
+      } else if (f && f.char === top.char && f.bare && f.len >= top.len) {
         stack.pop();
         if (stack.length === 0) {
           blocks.push({ info: open.info, inner: body(open.bodyStart, offset - 1, open.indent), start: open.start, end: lineEnd });
@@ -1068,7 +1119,7 @@ function scanFences(text: string, isTool: (info: string) => boolean, from = 0): 
   }
   if (open && glued && !openHeredoc(text.slice(open.bodyStart, Math.max(open.bodyStart, glued.bodyEnd)))) {
     blocks.push({ info: open.info, inner: body(open.bodyStart, glued.bodyEnd, open.indent), start: open.start, end: glued.end });
-    const rest = scanFences(text, isTool, glued.next);
+    const rest = scanFences(text, specs, glued.next);
     return { blocks: [...blocks, ...rest.blocks], unclosed: rest.unclosed };
   }
   return { blocks, unclosed: open && { info: open.info, start: open.start, inner: body(open.bodyStart, text.length, open.indent) } };
@@ -1571,7 +1622,7 @@ function restates(prev: ToolFence, next: ToolFence, gap: string): boolean {
 function toolFences(
   text: string,
   specs: Map<string, FencedToolSpec>,
-  scan = scanFences(text, (info) => resolveSpec(specs, info) !== undefined),
+  scan = scanFences(text, specs),
 ): ToolFence[] {
   const fences: ToolFence[] = [];
   for (const block of scan.blocks) {
@@ -1599,7 +1650,7 @@ export function parseFencedToolCalls(
 ): FencedParseResult {
   const calls: ParsedToolCall[] = [];
   let leftover = text;
-  const scan = scanFences(text, (info) => resolveSpec(specs, info) !== undefined);
+  const scan = scanFences(text, specs);
 
   for (const fence of toolFences(text, specs, scan)) {
     calls.push(makeCall(fence.name, fence.args));
@@ -1626,7 +1677,7 @@ export function findFirstToolFence(
   text: string,
   specs: Map<string, FencedToolSpec>,
 ): { start: number; end: number } | null {
-  const scan = scanFences(text, (info) => resolveSpec(specs, info) !== undefined);
+  const scan = scanFences(text, specs);
   const first = toolFences(text, specs, scan)[0];
   if (first) return { start: first.start, end: first.end };
   const open = unclosedToolCall(scan, specs, text.length);
@@ -1678,7 +1729,7 @@ export function unreadableToolFence(
   text: string,
   specs: Map<string, FencedToolSpec>,
 ): { name: string; reason: string } | null {
-  const scan = scanFences(text, (info) => resolveSpec(specs, info) !== undefined);
+  const scan = scanFences(text, specs);
   let found: { name: string; reason: string } | null = null;
   for (const block of scan.blocks) {
     const spec = resolveSpec(specs, block.info);

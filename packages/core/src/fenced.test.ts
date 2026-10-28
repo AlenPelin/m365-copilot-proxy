@@ -251,6 +251,65 @@ describe("parseFencedToolCalls", () => {
     expect(JSON.parse(calls[0].function.arguments)).toEqual({ path: "README.md", content: body });
   });
 
+  // Idea from retsimx 2c16c22: a README with a plain (bare) ``` code block was
+  // written cut off at that line, the rest left as prose.
+  describe("a bare ``` code block inside a write/edit body", () => {
+    const readme = ["# Tool", "", "Install:", "", "```", "pnpm install", "```", "", "## Usage", "Run it."].join("\n");
+
+    it("keeps a write body whole", () => {
+      const { calls, leftover } = parseFencedToolCalls(`\`\`\`write_file\npath: README.md\n\n${readme}\n\`\`\``, specs);
+      expect(calls).toHaveLength(1);
+      expect(JSON.parse(calls[0].function.arguments)).toEqual({ path: "README.md", content: readme });
+      expect(leftover.trim()).toBe("");
+    });
+
+    it("keeps several bare blocks, mixed with a ```bash block", () => {
+      const body = ["```", "a", "```", "", "```bash", "b", "```", "", "```", "c", "```", "end"].join("\n");
+      const { calls } = parseFencedToolCalls(`\`\`\`write_file\npath: R.md\n\n${body}\n\`\`\``, specs);
+      expect(JSON.parse(calls[0].function.arguments).content).toBe(body);
+    });
+
+    it("keeps an edit's SEARCH/REPLACE text whole", () => {
+      const text = [
+        "```edit_file", "path: README.md", "<<<<<<< SEARCH", "Install:", "=======",
+        "Install:", "", "```", "pnpm install", "```", ">>>>>>> REPLACE", "```",
+      ].join("\n");
+      const { calls } = parseFencedToolCalls(text, specs);
+      expect(calls).toHaveLength(1);
+      expect(JSON.parse(calls[0].function.arguments)).toEqual({ path: "README.md", old: "Install:", new: "Install:\n\n```\npnpm install\n```" });
+    });
+
+    it("keeps a header-only edit's new text whole", () => {
+      const ocEdit: ToolDef = { type: "function", function: { name: "edit", parameters: { type: "object",
+        properties: { path: { type: "string" }, oldString: { type: "string" }, newString: { type: "string" } } } } };
+      const text = "```edit\npath: README.md\noldString: Install:\nnewString: Install:\n```\npnpm install\n```\n```";
+      const { calls } = parseFencedToolCalls(text, buildSpecMap([ocEdit]));
+      expect(JSON.parse(calls[0].function.arguments)).toEqual({ path: "README.md", oldString: "Install:", newString: "Install:\n```\npnpm install\n```" });
+    });
+
+    it("still closes at a bare line when the next fence is another tool call", () => {
+      const { calls } = parseFencedToolCalls("```write_file\npath: a.txt\n\nhi\n```\n```bash\ncat a.txt\n```", specs);
+      expect(calls.map((c) => c.function.name)).toEqual(["write_file", "bash"]);
+      expect(JSON.parse(calls[0].function.arguments).content).toBe("hi");
+    });
+
+    it("still closes at a bare line when a tool result follows", () => {
+      const { calls } = parseFencedToolCalls("```write_file\npath: a.txt\n\nhi\n```\n<tool_response>\n```\nx\n```", specs);
+      expect(JSON.parse(calls[0].function.arguments).content).toBe("hi");
+    });
+
+    it("leaves a shell block's bare closer alone", () => {
+      const { calls } = parseFencedToolCalls("```bash\nls\n```\nOutput looks like:\n```\nfile.txt\n```", specs);
+      expect(JSON.parse(calls[0].function.arguments).command).toBe("ls");
+    });
+
+    it("asks again, rather than writing half a file, when the real closer never comes", () => {
+      const cut = "```write_file\npath: README.md\n\n# Tool\n```\npnpm install\n```";
+      expect(parseFencedToolCalls(cut, specs).calls).toHaveLength(0);
+      expect(unreadableToolFence(cut, specs)?.name).toBe("write_file");
+    });
+  });
+
   // The baseline framing teaches `cat > f <<'EOF'` for writing files. Writing a
   // Markdown file that contains code fences that way used to be cut at the first
   // inner fence — the old closer matched the backticks opening "```bash" — so the

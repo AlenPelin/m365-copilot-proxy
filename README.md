@@ -151,6 +151,15 @@ it scored 0/5 on real agentic tasks; see [hypotheses §9](docs/hypotheses.md)):
   `=` or `{`). No fallback closer is taken while a heredoc in the body (`<<EOF`, `<<'EOF'`,
   `<<-EOF`) is still open, so a cut-off heredoc never runs and clobbers a file. A fence line that
   reads as prose (```` ```Here is the plan ````) is not an opener unless its first word is a tool name.
+- **A plain ``` code block inside a write/edit body** (`bareFenceFollows` in `fenced.ts`): in a
+  block for any tool but the shell, a bare ```` ``` ```` line exactly as long as the opener is read
+  as the opener of a code block in the file — not the call's closer — when another such bare line
+  follows before the next tool-call opener or a `<tool_response>` / `<tool_output>` /
+  `<tool_result>` / `<assistant>` tag. The last bare line before that is the closer. So a README
+  with a plain code block is written whole instead of cut at it (idea from retsimx 2c16c22). If
+  the real closer never comes, the block is unclosed and the model is asked again, so a half file
+  is never written. Cost: prose plus a bare-fenced block written after a write call end up in the
+  file. Shell blocks always close at their first bare line.
 - **Argument values follow the tool's JSON schema** (`coerceHeaderValue` / `parseFencedInner`
   in `fenced.ts`). Every value arrives as text and is converted to the declared type: `boolean`
   (`true`/`yes`/`y`/`1`/`on` and the false forms, any case), `integer` / `number` (whole-string
