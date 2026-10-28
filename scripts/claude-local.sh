@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Launch Claude Code pointed at the LOCAL M365 proxy (its /v1/messages endpoint),
+# with an isolated, repo-local config dir (./.claude-local) so it never touches
+# your real ~/.claude settings, sessions or login.
+#
+#   pnpm run claude                      # interactive, model gpt-5.5-think-deeper
+#   MODEL=claude-sonnet pnpm run claude  # another proxy model
+#   PORT=24034 pnpm run claude           # proxy on another port
+#   TOOLS= pnpm run claude               # all of Claude Code's tools (see below)
+#   pnpm run claude -- -p "write hi"     # pass a prompt / extra flags through
+#
+# Start the proxy first in another shell:  pnpm run proxy   (defaults to :4141)
+set -euo pipefail
+
+PORT="${PORT:-4141}"
+MODEL="${MODEL:-gpt-5.5-think-deeper}"
+# Claude Code's full tool set is large; big tool schemas make M365 Disengage, so
+# advertise only the core coding tools unless TOOLS says otherwise.
+TOOLS="${TOOLS-Bash,Read,Edit,Write,Glob,Grep}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if ! curl -s --max-time 3 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+  echo "[claude-local] ⚠ no proxy answering on :${PORT} — start it with 'pnpm run proxy' (or set PORT=...)"
+fi
+
+export CLAUDE_CONFIG_DIR="$ROOT/.claude-local"
+export ANTHROPIC_BASE_URL="http://127.0.0.1:${PORT}"
+# Any non-empty token stops Claude Code asking for a login; it must match
+# M365_PROXY_API_KEY when the proxy has one.
+export ANTHROPIC_AUTH_TOKEN="${M365_PROXY_API_KEY:-m365}"
+unset ANTHROPIC_API_KEY CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX
+# Every Claude Code model slot (incl. the haiku one for background work) → MODEL.
+export ANTHROPIC_MODEL="$MODEL" ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL" ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL" \
+  ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL" ANTHROPIC_SMALL_FAST_MODEL="$MODEL"
+# No telemetry/update/error-report traffic to Anthropic from this session.
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+
+args=(--model "$MODEL")
+[[ -n "$TOOLS" ]] && args+=("--tools=$TOOLS")
+echo "[claude-local] proxy=$ANTHROPIC_BASE_URL  model=$MODEL  tools=${TOOLS:-all}  config=$CLAUDE_CONFIG_DIR"
+exec claude "${args[@]}" "$@"

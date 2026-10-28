@@ -1,9 +1,22 @@
 import { type ModelSessionOptions, getAvailableModels } from "@m365-copilot/core";
 import { ChatCompletionRequest } from "./schemas.js";
 import { SessionPool, handleChatCompletion } from "./handler.js";
+import {
+  AnthropicMessagesRequest,
+  buildAnthropicModelsPayload,
+  estimateAnthropicInputTokens,
+  handleAnthropicMessages,
+} from "./anthropic.js";
 
 export { SessionPool, handleChatCompletion } from "./handler.js";
 export { ChatCompletionRequest, ChatMessage, ToolCall, ToolDefinition } from "./schemas.js";
+export {
+  AnthropicMessagesRequest,
+  handleAnthropicMessages,
+  estimateAnthropicInputTokens,
+  resolveM365Model,
+  CLAUDE_GATEWAY_MODEL_PREFIX,
+} from "./anthropic.js";
 
 // Re-export tool utilities from core
 export {
@@ -55,12 +68,26 @@ export function buildModelsPayload() {
   };
 }
 
+/**
+ * `GET /v1/models` for an Anthropic client (Claude Code gateway discovery): the
+ * Anthropic Models API shape, IDs prefixed `claude-m365--`. Chosen when the
+ * request carries `anthropic-version` or `x-m365-claude-code: 1`.
+ */
+export function buildClaudeModelsPayload() {
+  return buildAnthropicModelsPayload(CONTEXT_WINDOW_TOKENS, MAX_OUTPUT_TOKENS);
+}
+
+/** Whether a `/v1/models` request comes from an Anthropic client. */
+export function wantsAnthropicModels(header: (name: string) => string | null | undefined): boolean {
+  return !!header("anthropic-version") || header("x-m365-claude-code") === "1";
+}
+
 // --- CORS (permissive, matches the previous Hono `cors()` default) ---
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, anthropic-version, x-api-key, x-m365-claude-code",
 };
 
 function withCors(res: Response): Response {
@@ -105,7 +132,22 @@ export function createApp(sessionOptions: ModelSessionOptions = {}): FetchApp {
     }
 
     if (method === "GET" && pathname === "/v1/models") {
-      return withCors(json(200, buildModelsPayload()));
+      const anthropic = wantsAnthropicModels((n) => req.headers.get(n));
+      return withCors(json(200, anthropic ? buildClaudeModelsPayload() : buildModelsPayload()));
+    }
+
+    if (method === "POST" && pathname === "/v1/messages") {
+      let body: ReturnType<typeof AnthropicMessagesRequest.parse>;
+      try {
+        body = AnthropicMessagesRequest.parse(await req.json());
+      } catch (err: any) {
+        return withCors(json(400, { type: "error", error: { type: "invalid_request_error", message: err.message } }));
+      }
+      return withCors(await handleAnthropicMessages(body, pool, { signal: req.signal }));
+    }
+
+    if (method === "POST" && pathname === "/v1/messages/count_tokens") {
+      return withCors(json(200, { input_tokens: estimateAnthropicInputTokens(await req.json().catch(() => null)) }));
     }
 
     if (method === "POST" && pathname === "/v1/chat/completions") {

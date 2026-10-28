@@ -1,6 +1,6 @@
 # m365-copilot-proxy
 
-Use Microsoft 365 Copilot as an LLM backend for OpenAI-compatible coding agents like [pi](https://pi.dev/) and [OpenClaw](https://docs.openclaw.ai/). Wraps M365 Copilot's WebSocket/SignalR API in an OpenAI-compatible interface with tool calling support.
+Use Microsoft 365 Copilot as an LLM backend for OpenAI-compatible coding agents like [pi](https://pi.dev/) and [OpenClaw](https://docs.openclaw.ai/), and for [Claude Code](https://code.claude.com/) through an Anthropic Messages endpoint. Wraps M365 Copilot's WebSocket/SignalR API in an OpenAI-compatible (and Anthropic-compatible) interface with tool calling support.
 
 > **Want the gory protocol details?** See [docs/m365-copilot-api.md](docs/m365-copilot-api.md) — a full write-up of M365 Copilot's undocumented WebSocket API: auth, SignalR frames, tones/models, throttling, the "Disengaged" filter, and the Copilot Studio agent trick that makes tool calling work.
 
@@ -8,7 +8,7 @@ Use Microsoft 365 Copilot as an LLM backend for OpenAI-compatible coding agents 
 
 M365 Copilot uses a SignalR WebSocket protocol, not the OpenAI API. This project translates between the two:
 
-1. **Standalone proxy** — HTTP server with `/v1/chat/completions` and `/v1/models` endpoints. Works with any OpenAI-compatible client (pi, OpenClaw, etc.).
+1. **Standalone proxy** — HTTP server with `/v1/chat/completions` and `/v1/models` endpoints. Works with any OpenAI-compatible client (pi, OpenClaw, etc.). It also serves the Anthropic Messages API (`/v1/messages`, `/v1/messages/count_tokens`) for Claude Code — see [Use with Claude Code](#4-use-with-claude-code).
 2. **OpenClaw plugin** — Config generator + setup CLI for OpenClaw's provider system.
 
 ### Tool calling
@@ -202,8 +202,9 @@ Point [pi](https://pi.dev/) at it via `~/.pi/agent/models.json`:
 }
 ```
 
-> `apiKey` is a placeholder. The proxy binds to localhost and validates no
-> credential — the field exists only because the OpenAI client schema requires it.
+> `apiKey` is a placeholder. The proxy binds to `127.0.0.1` and checks no credential
+> unless `M365_PROXY_API_KEY` is set (then `apiKey` must be that key) — the field exists
+> only because the OpenAI client schema requires it.
 
 To let the model see images — a screenshot, a chart the agent drew, a PNG it `read`s — add
 `"input": ["text", "image"]` to each model entry. pi then sends them as `image_url` parts and the proxy
@@ -226,7 +227,76 @@ read the budget from its logs) and it slows the session down instead. Once the b
 reserve, it waits before each turn, inside the open stream so pi doesn't time out. See
 [`M365_AVOID_THROTTLING`](#environment-variables).
 
-### 4. Use with OpenClaw
+### 4. Use with Claude Code
+
+The proxy also speaks the Anthropic Messages API, so Claude Code can use it. Start the
+proxy, then in another shell:
+
+```sh
+pnpm run claude                         # bash (Linux/macOS/Git Bash)
+.\scripts\claude-local.ps1              # Windows PowerShell
+MODEL=claude-sonnet pnpm run claude     # another proxy model
+pnpm run claude -- -p "write hi"        # extra Claude Code flags pass through
+```
+
+The launcher (`scripts/claude-local.sh`, Windows twin `scripts/claude-local.ps1`) runs
+`claude` with:
+
+| Setting | Value | Why |
+|---|---|---|
+| `CLAUDE_CONFIG_DIR` | `./.claude-local` | isolated config; your real `~/.claude` login/settings are untouched |
+| `ANTHROPIC_BASE_URL` | `http://127.0.0.1:$PORT` (`PORT` default `4141`) | the local proxy |
+| `ANTHROPIC_AUTH_TOKEN` | `$M365_PROXY_API_KEY`, else `m365` | any non-empty token skips Claude Code's login; must match the proxy key when one is set |
+| `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL` | `$MODEL` (default `gpt-5.5-think-deeper`) | every model slot, background haiku calls included, goes to one proxy model |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` | no telemetry/update traffic to Anthropic |
+| `--tools` | `$TOOLS` (default `Bash,Read,Edit,Write,Glob,Grep`; `TOOLS=` for all) | Claude Code's full tool set is large, and big tool schemas make M365 `Disengage` |
+
+It unsets `ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`.
+Any other Anthropic client works too: point it at `http://127.0.0.1:4141` (no `/v1`).
+
+**How the endpoint works** (`packages/proxy-lib/src/anthropic.ts`). It is a translation
+layer over the OpenAI handler, so every proxy behaviour (session reuse, tool emulation,
+retries, throttling) applies unchanged:
+
+- **Request.** `system` (string or text blocks) plus any `role: "system"` messages become
+  one system message. `tool_use` blocks become assistant `tool_calls`; each `tool_result`
+  becomes a `tool` message (named after its `tool_use`; `is_error` adds a `[tool error]`
+  line). `image` blocks (base64 or URL, also inside tool results) become `image_url`
+  parts, which the handler uploads to M365. Text `document` blocks become text.
+  `thinking`/`redacted_thinking` blocks in assistant history are dropped. Any other block
+  type is answered with a 400 `invalid_request_error`, never silently dropped.
+  `tools` → OpenAI functions; `tool_choice` `auto`/`any`/`none`/`tool` →
+  `auto`/`required`/`none`/named function. `cache_control` and other extra fields are ignored.
+- **Model.** An exact proxy model ID is used as is; so is `claude-m365--<id>` (prefix
+  stripped). Any other name — Claude Code's own `claude-sonnet-4-5-…`, `claude-haiku-…` —
+  goes to `M365_CLAUDE_CODE_MODEL` if that is a proxy model, else the chat default
+  (`gpt-5.5-think-deeper`). The response's `model` echoes the requested name.
+- **Response.** Text and tool calls become `text` and `tool_use` blocks. `finish_reason`
+  `tool_calls` → `stop_reason: "tool_use"`, `length` → `max_tokens`, else `end_turn`;
+  `stop_sequences` are applied to the text (→ `stop_sequence`). `usage` carries
+  `input_tokens`/`output_tokens` plus the proxy's `x_m365_*` diagnostics.
+- **Streaming is buffered.** With `stream: true` the M365 turn runs to completion (an SSE
+  comment `: keepalive` every 15 s keeps the connection open), then the whole message is
+  sent as the standard event sequence (`message_start`, `content_block_start/delta/stop`,
+  `message_delta`, `message_stop`). Text is not token-live. Errors arrive as an `error` event.
+- **Errors.** Anthropic error shape (`{type:"error", error:{type, message}}`). An empty or
+  `Disengaged` M365 turn is a **400** `invalid_request_error`, not a 5xx: Claude Code
+  retries 5xx up to ten times, and each retry would start a new M365 thread — what the
+  thread-rate throttle counts. A 429 stays a 429 `rate_limit_error` with its `Retry-After`.
+- **`POST /v1/messages/count_tokens`** returns `{input_tokens}` estimated at ~4 characters
+  per token (M365 has no matching tokenizer).
+- **`GET /v1/models`** answers in the Anthropic Models API shape (`{data:[{id, type:"model",
+  display_name, created_at, max_input_tokens, max_tokens}], first_id, last_id, has_more}`)
+  when the request has an `anthropic-version` header or `x-m365-claude-code: 1`. IDs are
+  prefixed `claude-m365--`, because Claude Code's gateway model discovery only lists IDs
+  starting with `claude`/`anthropic`. Other clients get the OpenAI list as before.
+
+Limits: M365 tool calling is prompt-emulated, so it is less reliable than real Claude;
+this is wire compatibility, not an Anthropic model. Ported from the
+[NightMean/m365-copilot-proxy-claude](https://github.com/NightMean/m365-copilot-proxy-claude)
+fork (branch `anas/myclaude-verified-orchestrator`).
+
+### 5. Use with OpenClaw
 
 ```sh
 # Configure and start in one command
@@ -239,7 +309,7 @@ m365-proxy 4141
 
 The proxy uses session reuse and delta messages — follow-up turns only send new messages, saving M365 quota. New conversations are detected automatically when the message array shrinks or the first user message changes.
 
-### 5. Use as standalone proxy
+### 6. Use as standalone proxy
 
 ```sh
 npx m365-proxy 4141
@@ -249,6 +319,10 @@ pnpm run dev
 
 Then point any OpenAI-compatible client at `http://localhost:4141/v1`.
 
+The `m365-proxy` launcher binds to **`127.0.0.1`** unless `HOST` (or `NITRO_HOST`) is set —
+Nitro on its own would listen on every interface, letting anyone on the network use your
+M365 account. To expose it on purpose, set `HOST=0.0.0.0` **and** `M365_PROXY_API_KEY`.
+
 #### Temporary chats
 
 Proxy conversations use M365 **temporary-chat mode by default**
@@ -257,7 +331,7 @@ the Copilot history sidebar while multi-turn context still works for the live
 conversation. Set `M365_SAVE_HISTORY=1` before starting the proxy only if you
 deliberately want proxy chats saved in Copilot history.
 
-### 6. Run on NixOS (systemd service)
+### 7. Run on NixOS (systemd service)
 
 The proxy is a [Nitro](https://nitro.build/) service. The flake exposes a package
 (built from the workspace via [pnpm2nix](https://github.com/cramt/pnpm2nix)) and a NixOS
@@ -621,6 +695,9 @@ Three token scopes are acquired:
 | `M365_OPUS_FALLBACK_MODEL` | Model to serve `claude-opus` (Opus 5.5) requests with once its priority-access budget is used up, instead of returning a 429 — typically `claude-opus-4.8`, which isn't metered (premium accounts only). Applies until the budget resets; the response's `model` field names the model that answered. Unset by default. |
 | `M365_SONNET_FALLBACK_MODEL` | The same for `claude-sonnet-5.5` (Sonnet 5.5) once its priority-access budget is used up — e.g. `claude-sonnet-5` (unmetered) or `claude-sonnet` (Sonnet 4.6, any account). A fallback naming a metered model is ignored. Unset by default. |
 | `M365_SCENARIO` / `M365_LICENSE_TYPE` | Override the entitlement the WebSocket is opened under (defaults: `OfficeWebIncludedCopilot` / `Starter`, switching to `OfficeWebPaidCopilot` / `Premium` for the entitlement-gated models — `claude-opus`, `gpt-6-think-deeper`, `claude-sonnet-5` and `claude-sonnet-5.5`; `claude-opus-4.8` and `gpt-6.1-sol` stay on the included one). `scenario` is what gates the model list (and picks Sonnet 4.6 vs 5.5 for the `Claude_Sonnet` tone, Sonnet 4.6 vs 5 for `Claude_Sonnet_5`, Opus 4.8 vs 5.5 for `Claude_Opus`); `licenseType` rides along and unlocks nothing by itself. Forcing the paid scenario on `gpt-6.1-sol` spends its separate GPT-6.1 Sol allowance (40 turns a day, 75 a week), which the proxy doesn't track. |
+| `HOST` / `NITRO_HOST` | Address the server binds to. The `m365-proxy` launcher defaults it to `127.0.0.1`. |
+| `M365_PROXY_API_KEY` | Require this key on every `/v1/*` route except `GET /v1/models`, as `Authorization: Bearer <key>` or `x-api-key: <key>` (constant-time compare; else 401). Unset (default): no check. |
+| `M365_CLAUDE_CODE_MODEL` | Proxy model for `/v1/messages` requests that name a model the proxy doesn't know (Claude Code's own model names). Default: the chat default, `gpt-5.5-think-deeper`. |
 | `M365_CACHE_FILE` | Override MSAL token cache location |
 | `M365_SECRETS_FILE` | Override credentials file location |
 | `CHROMIUM_PATH` | Path to Chromium binary for automated login |
