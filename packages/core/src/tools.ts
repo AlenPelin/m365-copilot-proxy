@@ -297,6 +297,9 @@ const CONFABULATION_PATTERNS: RegExp[] = [
   // the shell-alias routing in fenced.ts and never reaches this check.
   /(?:current\s+working\s+directory|working\s+directory|cwd)[\s\S]{0,120}\/mnt\/data/i,
   /(?:\bpwd\b|\bcd\b)[\s\S]{0,60}\/mnt\/data/i,
+  // "the repository is not present in the current execution environment. The only
+  // filesystem visible here is: /mnt/data" (GPT-6.1 Sol under Claude Code).
+  /(?:execution\s+environment|filesystem|file\s+system)[\s\S]{0,160}\/mnt\/data/i,
   /(?:ran|used|executed|called)[\s\S]{0,80}container\.(?:exec|open_image|download)/i,
   /container\.(?:exec|open_image|download)[\s\S]{0,120}(?:returned|output|shows?|result)/i,
   /no\s+files?\s+(?:in|found|present|visible)/i,

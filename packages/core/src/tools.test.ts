@@ -706,3 +706,9 @@ describe("isProseDocument — 'please run … paste the output' is an action", (
     expect(isProseDocument(parsed, text, tools)).toBe(true);
   });
 });
+
+describe("looksLikeConfabulation — /mnt/data as the only filesystem", () => {
+  it("catches 'not present in the current execution environment … /mnt/data'", () => {
+    expect(looksLikeConfabulation("I can't apply or verify the fix yet because the repository is not present in the current execution environment. The only filesystem visible here is:\n\n/mnt/data")).toBe(true);
+  });
+});

@@ -366,6 +366,11 @@ assumes a 200k-token context window. It is harmless; M365 accepts more.
   myself" intro came first. Now, if there is no markdown heading, the line before the
   first block asks to run (ends in `run …:`), and the reply asks for the output or gives
   up, the first block runs as a tool call.
+- The `relay` framings now also name GPT's own sandbox as the wrong machine (`python`,
+  `container.exec`, `/mnt/data`, next to Claude's `/home/claude`, `/mnt/user-data`), and
+  "not present in the current execution environment … /mnt/data" counts as giving up.
+  `M365_NO_CODE_INTERPRETER=1` does not help: upstream found GPT-6 Sol's sandbox runs
+  without those optionsSets (`docs/hypotheses.md` §23 F50).
 - After an empty reply the proxy re-resolves the agent; with a remembered 403 it no longer
   tries publishing again.
 

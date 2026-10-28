@@ -536,8 +536,10 @@ export function transcriptStyleForVariant(variant: string): TranscriptStyle {
 // The one fact Sonnet 5 is missing: it has REAL function-calling tools of its
 // own, in a remote sandbox, so an unexplained second tool format reads as an
 // attempt to redefine its tools. Named explicitly because its CoT names them.
-const BUILT_IN_SANDBOX = "bash_tool, create_file, str_replace, view, …";
-const SANDBOX_PATHS = "/home/claude, /mnt/user-data";
+// GPT's own sandbox (python / container.exec in /mnt/data) added after GPT-6.1 Sol,
+// agent-less under Claude Code, answered "the only filesystem visible here is /mnt/data".
+const BUILT_IN_SANDBOX = "bash_tool, create_file, str_replace, view, python, container.exec, …";
+const SANDBOX_PATHS = "/home/claude, /mnt/user-data, /mnt/data";
 
 type FramingBuilder = (tools: ToolDef[]) => string;
 
