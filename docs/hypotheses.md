@@ -5786,3 +5786,36 @@ then delta `<block…`). No other head was seen doubled, so on main it isn't a l
 Also not ported: asmartin-ai's chatgpt-web half, ghostinator's docs and probe scripts.
 **Not covered:** no live A/B; unit tests only. Risk of the bare-fence rule: prose plus a
 bare-fenced block written after a write call end up in the file.
+
+## 43. Oct 29 2026 — session lifecycle: after Stop, idle TTL, reconnect turn count, empty-reply retry (ports from forks)
+Credit: retsimx / Lewis Lakerink (263a5a5, 1d859d4, d84c9a7), Bertogim (48fbe71, e78a5c3).
+Evidence is the forks'; each bug was first confirmed on main with a failing test. Summary here.
+
+### F100 — four session fixes, ported 🟢
+- **Nothing after Stop (retsimx 263a5a5).** After the Stop frame M365 keeps sending, including
+  "You have stopped this conversation."; it reached the answer and the conversation, and in long
+  Sonnet 5/5.5 sessions the model repeated it. `advance` in `session.ts` now drops every frame
+  once `onAbort` ran (client gone, or the early stop of §35). Their `createAnswerAccumulator`
+  refactor was not taken.
+- **Pool idle TTL (retsimx 1d859d4, d84c9a7).** Idle time counted from `resolve()`, so a turn
+  longer than 30 min left its conversation stale the moment it ended, and eviction could drop a
+  conversation mid-turn. `produce()` now brackets the turn (`beginTurn`/`endTurn`); eviction skips
+  turns in flight and counts from the turn's end. `M365_SESSION_IDLE_TTL_SEC` sets the TTL. On
+  main eviction runs only in `resolve()` (no metrics poll like the fork's), so the mid-turn case
+  needs a second conversation's request during a turn longer than the TTL.
+- **Turn count across a reconnect (Bertogim 48fbe71, the turn-count part).** The reconnect's fresh
+  `CopilotSession` counted from 0, so the resent turn went out as `isStartOfSession:true` into a
+  conversation M365 had, and `turnCount` fell. It now starts from the count before the failed
+  attempt; `chat()` rejects only before the turn is sent, so a failed first turn is still the
+  start. On main this didn't make the handler resend the full history (the count was ≥1 after
+  the reconnect's own turn); the wrong `isStartOfSession` was the live part. The fork's
+  history-rewrite detection was not ported.
+- **Empty-reply retry (Bertogim e78a5c3, the retry part).** The quick retry sent "Please
+  continue." (§38 F96's culprit); it now sends the turn's own prompt again. After the
+  InternalError fresh-conversation resend that is the full request, so the fresh conversation
+  is not asked to continue from nothing. The fork's streaming changes were not ported.
+
+**Not covered:** no live A/B; unit tests only. Cost to watch: if M365 did take in a turn that came
+back empty, the retry puts the same tool output into the conversation twice (before, it added
+"Please continue."). Falsifier for the retry change: same-conversation retries answering without
+the tool output at the old rate.
