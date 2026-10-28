@@ -34,14 +34,14 @@ separate OpenAI or Anthropic bill.
    opens and you sign in yourself, with your usual MFA. The proxy never stores your
    password. After that, cached tokens are refreshed silently ([details](#2-sign-in)).
 4. The proxy listens on `http://127.0.0.1:4141`.
+6. **Pick a model** with `$env:MODEL = "gpt-6.1-sol"` (see [Available models](#available-models)). What you
+   can use depends on your Copilot licence: some models need a premium seat, and some have
+   daily or weekly quotas.
 5. **Start an agent** in another shell:
    - Claude Code: `copilot`, or `.\scripts\claude-local.ps1` on Windows
      ([details](#4-use-with-claude-code))
    - anything else OpenAI-compatible: base URL `http://127.0.0.1:4141/v1`, any API key
      ([details](#6-use-as-standalone-proxy))
-6. **Pick a model** with `$env:MODEL = "gpt-6.1-sol"` (see [Available models](#available-models)). What you
-   can use depends on your Copilot licence: some models need a premium seat, and some have
-   daily or weekly quotas.
      
 Expect it to be slower than a real API (10–30 s per reply on the thinking models), and keep
 the agent's tool set small: big tool lists make M365 refuse to answer (`Disengaged`).
