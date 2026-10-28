@@ -451,6 +451,14 @@ export class CopilotSession {
       // Pull any generated images off a bot message. The GraphicArt frame arrives
       // repeatedly as a Progress snapshot (status climbs to 2 = ready) and again in
       // the final type:2 item, so we upsert by fileToken and keep the readiest copy.
+      // Commands the model ran in M365's own sandbox ("Coding and executing" frames:
+      // contentType "Code", the command in hiddenText). The handler can re-route one
+      // to the harness's shell tool (fenced.ts sandboxCommandAsShellCall).
+      const sandboxCode: string[] = [];
+      const captureSandboxCode = (m: any) => {
+        if (m?.contentType !== "Code" || typeof m.hiddenText !== "string") return;
+        if (!sandboxCode.includes(m.hiddenText)) sandboxCode.push(m.hiddenText);
+      };
       const captureImages = (m: any) => {
         const list = m?.contentGenerationProgressList;
         if (!Array.isArray(list)) return;
@@ -515,6 +523,9 @@ export class CopilotSession {
         },
         get metering() {
           return metering;
+        },
+        get sandboxCode() {
+          return [...sandboxCode];
         },
         get images() {
           return [...imagesByToken.values()];
@@ -859,6 +870,7 @@ export class CopilotSession {
             for (const m of item.messages ?? []) {
               if (m.author !== "bot") continue;
               captureImages(m);
+              captureSandboxCode(m);
               if (m.contentOrigin) contentOrigin = m.contentOrigin;
               if (m.messageType) messageType = m.messageType;
               if (m.messageId) messageId = m.messageId;
@@ -902,6 +914,7 @@ export class CopilotSession {
                 // `3PDeclarativeAgent` and surface `Disengaged` cleanly.
                 if (m.author === "bot") {
                   captureImages(m);
+                  captureSandboxCode(m);
                   if (m.contentOrigin) contentOrigin = m.contentOrigin;
                   if (m.messageType) messageType = m.messageType;
                   if (m.messageId) messageId = m.messageId;

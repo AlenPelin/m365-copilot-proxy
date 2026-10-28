@@ -11,6 +11,7 @@ import {
   isAgentRouteAlive,
   PREMIUM_ONLY_AGENT_TONES,
   defaultFramingForModel,
+  sandboxCommandAsShellCall,
   currentFramingVariant,
   transcriptStyleForVariant,
   priorityAccessExhaustionOf,
@@ -83,7 +84,8 @@ export const NEW_USER_TURN_REMINDER =
   // the request ("do this for me please" → "I don't have the 'same as before' task").
   "<harness_note>Not part of the request above. Your tools still work: to run a command or read " +
   "a file, reply with one tool block (e.g. a ```bash block) and its real output comes back as a " +
-  "<tool_response>.</harness_note>";
+  "<tool_response>. Never run commands or look for files in your own sandbox (python, " +
+  "container.exec, /mnt/data): the project is not there, only on my machine.</harness_note>";
 
 // Forcing follow-up sent (in the same conversation) when M365 confabulates an
 // inability to act instead of calling a tool. See the confab-retry loop below.
@@ -462,6 +464,7 @@ export async function handleChatCompletion(
   // to "context window remaining"). Token counts aren't exposed by M365.
   let lastThrottle: { current: number; max: number } | null = null;
   let lastContentOrigin: string | null | undefined;
+  let lastSandboxCode: string[] = [];
   let lastMessageType: string | null | undefined;
   let lastScores: Record<string, number> | null | undefined;
   let lastTurnCount: number | null | undefined;
@@ -570,6 +573,7 @@ export async function handleChatCompletion(
       lastScores = copilotStream.scores;
       lastTurnCount = copilotStream.turnCount;
       lastMetering = copilotStream.metering;
+      lastSandboxCode = copilotStream.sandboxCode ?? [];
 
       // M365 SAYS when it throttles: the final item's result is `Throttled` /
       // `PerUserThrottled` (#35). Checked BEFORE the content check so
@@ -805,6 +809,19 @@ export async function handleChatCompletion(
     log.debug("Raw response (tool mode):", trunc(fullText, 1000));
     let { parsed, judged } = parseReply(fullText, body.tools);
     log.info(`Parse result: hasToolCalls=${parsed.hasToolCalls}, count=${parsed.toolCalls.length}`);
+
+    // The model ran its command in M365's own sandbox instead of writing a tool block:
+    // run that command on the user's machine through the shell tool (fenced.ts
+    // sandboxCommandAsShellCall). Cheaper than the forcing retry below, which tends to
+    // get another sandbox turn or an empty reply.
+    if (!parsed.hasToolCalls) {
+      const rerouted = sandboxCommandAsShellCall(lastSandboxCode, body.tools ?? []);
+      if (rerouted) {
+        log.info(`Model ran ${lastSandboxCode.length} command(s) in M365's sandbox — running the last real one locally via ${rerouted.function.name}: ${trunc(rerouted.function.arguments, 300)}`);
+        parsed = { hasToolCalls: true, toolCalls: [rerouted], textContent: null };
+      }
+    }
+
 
     // Salvage stochastic turn-1 confabulation: M365's chat model sometimes claims it
     // "can't access the files / commands return no output" and asks the user to paste

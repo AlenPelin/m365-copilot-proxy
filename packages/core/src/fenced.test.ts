@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect } from "vitest";
 import {
+  sandboxCommandAsShellCall,
   deriveFencedSpec,
   renderFencedCall,
   parseFencedToolCalls,
@@ -952,5 +953,28 @@ describe("multi-line string values in a header-only fence (#82)", () => {
     const write: ToolDef = { type: "function", function: { name: "write", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } } } } };
     const { calls } = parseFencedToolCalls("```write\npath: a.txt\nhello\nworld\n```", buildSpecMap([write]));
     expect(JSON.parse(calls[0].function.arguments)).toEqual({ path: "a.txt", content: "hello\nworld" });
+  });
+});
+
+describe("sandboxCommandAsShellCall", () => {
+  const tools = [{
+    type: "function" as const,
+    function: { name: "Bash", description: "Executes a bash command", parameters: { type: "object", properties: { command: { type: "string" }, timeout: { type: "number" } }, required: ["command"] } },
+  }];
+  it("takes the last command that isn't a search of the sandbox (seen live)", () => {
+    const codes = [
+      "bash -lc echo ROOTS && ls / && echo DATA && find /mnt -maxdepth 3 -type f | head -100",
+      "bash -lc pwd && ls -la && find .. -maxdepth 3 -name '*.sln' | head && dotnet build -v minimal",
+      "bash -lc find /mnt/data -maxdepth 4 \( -name '*.sln' \) | sort | head -200",
+      "bash -lc grep -RIn 'X' / 2>/dev/null | head -200",
+    ];
+    const call = sandboxCommandAsShellCall(codes, tools);
+    expect(call?.function.name).toBe("Bash");
+    expect(JSON.parse(call!.function.arguments)).toEqual({ command: "pwd && ls -la && find .. -maxdepth 3 -name '*.sln' | head && dotnet build -v minimal" });
+  });
+  it("returns null for sandbox-only commands, python cells, or no shell tool", () => {
+    expect(sandboxCommandAsShellCall(["bash -lc ls -la /mnt/data"], tools)).toBeNull();
+    expect(sandboxCommandAsShellCall(["import os\nprint(os.listdir('.'))"], tools)).toBeNull();
+    expect(sandboxCommandAsShellCall(["bash -lc dotnet build"], [])).toBeNull();
   });
 });

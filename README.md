@@ -374,6 +374,17 @@ assumes a 200k-token context window. It is harmless; M365 accepts more.
   "not present in the current execution environment … /mnt/data" counts as giving up.
   `M365_NO_CODE_INTERPRETER=1` does not help: upstream found GPT-6 Sol's sandbox runs
   without those optionsSets (`docs/hypotheses.md` §23 F50).
+- **Sandbox commands are re-routed to your machine** (`sandboxCommandAsShellCall` in
+  `core/src/fenced.ts`). When the model runs a command in M365's own sandbox instead of
+  writing a tool block, M365 reports it in a progress frame (`contentType: "Code"`,
+  `hiddenText: "bash -lc <cmd>"`; recorded as `sandboxCode` on the stream). If the reply
+  has no tool call, the proxy takes the last such command that doesn't search the sandbox
+  itself (no `/mnt`, `/home/oai`, or bare `/` argument) and returns it as a call to the
+  harness's shell tool, so it runs locally. Python cells are not translated. Seen:
+  `pwd && ls -la && find .. -maxdepth 3 -name '*.sln' | head && dotnet build` ran in
+  `/mnt/data` ("dotnet: command not found").
+- The per-message `<harness_note>` also says: never run commands or look for files in your
+  own sandbox (python, container.exec, `/mnt/data`).
 - After an empty reply the proxy re-resolves the agent; with a remembered 403 it no longer
   tries publishing again.
 

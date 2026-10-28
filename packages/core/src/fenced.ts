@@ -1475,3 +1475,32 @@ export function findFirstToolFence(
   if (open && parseFencedInner(open.spec, open.inner)) return { start: open.start, end: open.end };
   return null;
 }
+
+/** Commands that only make sense in M365's own sandbox: they look in /mnt (its
+ *  data dir), /home/oai, or search from the filesystem root. */
+const SANDBOX_ONLY_COMMAND = /\/mnt\b|\/home\/oai|(?:^|[\s;&|(])\/(?=$|[\s;&|)])/;
+
+/**
+ * Agent-less GPT models sometimes run their command in M365's own Python/bash
+ * sandbox instead of emitting a tool block. M365 reports each one in a progress
+ * frame (`contentType: "Code"`, `hiddenText: "bash -lc <cmd>"`), so the command the
+ * model meant to run is known. Turn the LAST such command of the turn that isn't a
+ * search of the sandbox itself into a call to the harness's shell tool, so it runs
+ * on the user's machine. Seen with GPT-6.1 Sol under Claude Code:
+ * `bash -lc pwd && ls -la && find .. -maxdepth 3 -name '*.sln' | head && dotnet build`
+ * ran in /mnt/data ("dotnet: command not found"). Python cells are not translated.
+ */
+export function sandboxCommandAsShellCall(codes: string[], tools: ToolDef[]): ParsedToolCall | null {
+  const shell = findShellTool(tools);
+  if (!shell) return null;
+  const param = deriveFencedSpec(shell).bodyParam ?? "command";
+  for (let i = codes.length - 1; i >= 0; i--) {
+    const m = /^\s*(?:ba)?sh\s+-l?c\s+([\s\S]+)$/.exec(codes[i]);
+    if (!m) continue;
+    let cmd = m[1].trim();
+    if (cmd.length >= 2 && (cmd[0] === "'" || cmd[0] === '"') && cmd.at(-1) === cmd[0]) cmd = cmd.slice(1, -1);
+    if (!cmd || SANDBOX_ONLY_COMMAND.test(cmd)) continue;
+    return makeCall(shell.function.name, { [param]: cmd });
+  }
+  return null;
+}

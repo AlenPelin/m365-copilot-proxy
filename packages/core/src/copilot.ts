@@ -545,6 +545,9 @@ export interface CopilotStream {
   /** Generated images captured this turn (empty unless image gen was requested
    *  and the server returned a GraphicArt frame). */
   images: CapturedImage[];
+  /** Commands the model ran in M365's own sandbox this turn (progress frames with
+   *  `contentType: "Code"`; e.g. `bash -lc ls`). Empty when it ran none. */
+  sandboxCode?: string[];
   /** True if the server returned content (deltas or full text) */
   hasContent: boolean;
   /** Throttle info if provided by M365 */
