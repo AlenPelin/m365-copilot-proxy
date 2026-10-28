@@ -276,6 +276,13 @@ opens with `<`, M365 sends the head snapshot `<` and then a first delta that sta
 `<` instead of being appended, so the reply doesn't start `<<document>`. Only a lone `<` head
 counts: `*` + `*Summary**` or `` ` `` + ` ``bash` are continuations and are appended.
 
+**Nothing is kept after the Stop frame.** When a turn is cancelled (the HTTP client left, or the
+handler's early stop on a model-written `<tool_response>`), the session sends M365's Stop frame and
+from then on drops every text frame of that turn, delta or snapshot. M365 keeps sending for a
+moment after Stop, including its own UI text "You have stopped this conversation."; before, that
+text went into the answer and into the conversation, and the model then copied it on later turns
+(idea from retsimx 263a5a5).
+
 ## Packages
 
 ```

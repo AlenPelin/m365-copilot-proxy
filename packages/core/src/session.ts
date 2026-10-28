@@ -386,6 +386,8 @@ export class CopilotSession {
       // bot MESSAGES per turn — so text is assembled per message (`composer`) and
       // the composed whole folded into this string. See `advance`.
       let answer = "";
+      // Set by `onAbort` once the Stop frame is sent; `advance` then keeps nothing.
+      let stopped = false;
       const composer = new TurnTextComposer();
       let receivedContent = false;
       let throttleInfo: { current: number; max: number } | null = null;
@@ -488,7 +490,12 @@ export class CopilotSession {
 
       // Fold a token delta OR a full-text snapshot into `answer` and stream the
       // newly-appended suffix (see foldStreamText for the prefix-safe rules).
+      // Once the Stop frame is sent (`onAbort`: the client left, or the handler's
+      // early stop), nothing more is kept: M365 goes on for a moment and adds its
+      // own UI text ("You have stopped this conversation."), which would end up in
+      // the answer and the model would copy it on later turns (retsimx 263a5a5).
       const advance = (next: string) => {
+        if (stopped) return;
         const r = foldStreamText(answer, next);
         if (r.answer !== answer) {
           answer = r.answer;
@@ -564,7 +571,6 @@ export class CopilotSession {
       const ws = new WebSocket(wsUrl, { headers: buildCopilotWebSocketHeaders(conversationId) });
 
       let handshakeDone = false;
-      let stopped = false;
 
       // Cancellation: when the caller's signal aborts (HTTP client disconnected),
       // cancel the in-flight M365 turn the same way the real UI does — send the
