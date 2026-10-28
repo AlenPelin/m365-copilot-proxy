@@ -355,7 +355,9 @@ assumes a 200k-token context window. It is harmless; M365 accepts more.
   only the new messages, so in a long session the tool instructions are many turns back.
   Seen at turn 24 of a Claude Code session: asked "run tests", the model replied "no
   executable tool is available to me in this turn". Now a follow-up that carries a new user
-  message ends with a one-line reminder that tool blocks still work. The "gave up" detector
+  message ends with a one-line `<harness_note>` saying it is not part of the request and
+  that tool blocks still work. (A first version began "Same as before:", and the model read
+  that as part of the request.) The "gave up" detector
   (`looksLikeConfabulation`) also catches "can't *actually* run …" and "no … tool is
   available", and then retries once.
 - **"Please run: ```bash …``` … paste the output" is executed** (`asksUserToRun` in

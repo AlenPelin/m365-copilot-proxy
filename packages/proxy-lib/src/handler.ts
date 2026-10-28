@@ -79,8 +79,11 @@ async function renderImagesMarkdown(images: CapturedImage[]): Promise<string> {
 
 // Appended to a follow-up turn that carries a new user message (tool requests only).
 export const NEW_USER_TURN_REMINDER =
-  "(Same as before: to run anything or look at files, reply with one tool block — e.g. a ```bash block — " +
-  "and its real output comes back as a <tool_response>. Your tools work in this turn too.)";
+  // Worded as a harness note, not as the user: "Same as before: …" was read as part of
+  // the request ("do this for me please" → "I don't have the 'same as before' task").
+  "<harness_note>Not part of the request above. Your tools still work: to run a command or read " +
+  "a file, reply with one tool block (e.g. a ```bash block) and its real output comes back as a " +
+  "<tool_response>.</harness_note>";
 
 // Forcing follow-up sent (in the same conversation) when M365 confabulates an
 // inability to act instead of calling a tool. See the confab-retry loop below.
