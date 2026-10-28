@@ -4,6 +4,118 @@ Use Microsoft 365 Copilot as an LLM backend for OpenAI-compatible coding agents 
 
 > **Want the gory protocol details?** See [docs/m365-copilot-api.md](docs/m365-copilot-api.md) — a full write-up of M365 Copilot's undocumented WebSocket API: auth, SignalR frames, tones/models, throttling, the "Disengaged" filter, and the Copilot Studio agent trick that makes tool calling work.
 
+## Start here (new users)
+
+### What this project does
+
+Your work account may come with Microsoft 365 Copilot. It can talk to strong models
+(GPT-5.x, GPT-6, Claude Sonnet/Opus), but only through Microsoft's chat window. Coding
+agents such as pi, OpenClaw and Claude Code can't use it, because they expect an OpenAI or
+Anthropic API.
+
+This project is a small local server (the **proxy**) that sits in between:
+
+```
+coding agent  ──HTTP──▶  proxy on 127.0.0.1:4141  ──WebSocket──▶  M365 Copilot (Microsoft)
+(pi / Claude Code)       translates both ways                      signed in as you
+```
+
+- It signs in to M365 Copilot as you, the same way the Copilot web page does.
+- It offers `/v1/chat/completions` (OpenAI) and `/v1/messages` (Anthropic) on your machine.
+- M365 Copilot has no real tool calling, so the proxy describes the tools in the prompt,
+  reads the tool calls back out of the model's text, and hands them to the agent. The agent
+  then runs them (edit a file, run a command) on your machine.
+
+You get a working coding agent that uses the Copilot seat you already have, with no
+separate OpenAI or Anthropic bill.
+
+### How to use it (quick start)
+
+1. **Check you can use it.** You need a work or school (Entra ID) account with M365
+   Copilot Chat, Node.js 24+ and pnpm 10+. Personal Microsoft accounts don't work.
+2. **Install:** `git clone`, `pnpm install`, `pnpm build` ([details](#1-install)).
+3. **Sign in.** Either put your email, password and TOTP secret in
+   `~/.config/opencode-m365/secrets.json` for headless sign-in, or set
+   `M365_ENABLE_INTERACTIVE_APPROVAL=1` and sign in once in a browser window
+   ([details](#2-configure-credentials)). After that, cached tokens are refreshed silently.
+4. **Start the proxy:** `pnpm run proxy`. It listens on `http://127.0.0.1:4141`.
+5. **Start an agent** in another shell:
+   - pi: `pnpm run pi` ([details](#3-use-with-pi-or-any-openai-compatible-agent))
+   - Claude Code: `pnpm run claude`, or `.\scripts\claude-local.ps1` on Windows
+     ([details](#4-use-with-claude-code))
+   - anything else OpenAI-compatible: base URL `http://127.0.0.1:4141/v1`, any API key
+     ([details](#6-use-as-standalone-proxy))
+6. **Pick a model** with `MODEL=…` (see [Available models](#available-models)). What you
+   can use depends on your Copilot licence: some models need a premium seat, and some have
+   daily or weekly quotas.
+
+Expect it to be slower than a real API (10–30 s per reply on the thinking models), and keep
+the agent's tool set small: big tool lists make M365 refuse to answer (`Disengaged`).
+
+### How it protects your data
+
+What it does:
+
+- **Data goes only to Microsoft.** The proxy has no telemetry, analytics or third-party
+  hosts. It sends your prompts to the same M365 Copilot service your company already uses,
+  under your company's Microsoft agreement. The full list of hosts is in
+  [Data flow and privacy](#data-flow-and-privacy).
+- **Nothing is open to the network.** The server binds to `127.0.0.1` only. You can add a
+  key with `M365_PROXY_API_KEY`.
+- **No chat history.** Proxy chats use M365 temporary-chat mode, so they don't show up in
+  your Copilot history (unless `M365_SAVE_HISTORY=1`).
+- **Claude Code can't reach Anthropic.** The `claude-local` launcher uses its own config
+  folder, turns off Claude Code's telemetry and update traffic, and runs Claude Code behind
+  an **egress guard**. The guard refuses every connection to `anthropic.com`, `claude.ai`
+  and `claude.com` before anything is sent, including connections from commands the agent
+  runs ([details](#4-use-with-claude-code)).
+- **No logs of your prompts by default.** Prompt and reply dumps are written only when you
+  turn on `M365_DEBUG`, `M365_TRACE` or `M365_DUMP_FRAMES`.
+
+What it does **not** do — read this before using it on client work:
+
+- **Everything the agent reads goes to Microsoft.** File contents, command output and paths
+  are all part of the prompt. If a client contract says their code must not be sent to an
+  AI service, this tool breaks that rule, the same as pasting the code into Copilot by hand
+  would.
+- **Your tenant admins can see some of it.** The proxy creates a Copilot Studio agent in
+  your tenant's Power Platform environment. Sign-ins and Copilot use are logged by
+  Microsoft for your organisation as usual.
+- **Secrets on disk are plain text.** `secrets.json` holds your password and TOTP secret
+  unencrypted. Keep it private, or use interactive sign-in instead.
+- **The egress guard only covers programs that honour proxy settings.** Only an OS firewall
+  rule stops a program that ignores them.
+- **Nothing stops you leaking data into this repo.** If you copy a real model reply into a
+  test or a doc, scrub client names, paths and file names first.
+
+### Is it legal to use with Microsoft 365 Copilot?
+
+Short answer: **it is not an approved way to use M365 Copilot, and it can break your
+company's rules or Microsoft's terms. Check before you use it at work.** This is not legal
+advice.
+
+- **There is no official API.** Microsoft does not offer M365 Copilot chat as an API for
+  third-party tools. This proxy uses the private API behind Microsoft's own web client.
+- **It pretends to be Microsoft's client.** It signs in with Microsoft's own first-party
+  client ID, sends the same headers as the web page, and drives the login page in a hidden
+  browser in a way that avoids bot detection. Microsoft's terms generally don't allow
+  accessing services by automated or unapproved means. Microsoft could block it at any
+  time, and could act against the account.
+- **Your company's policy comes first.** M365 is licensed to your employer, not to you.
+  Most companies have an acceptable-use or AI-use policy, and many limit which tools may
+  send company or client data to an AI service. Using this without approval could be a
+  policy breach even though the data stays with Microsoft.
+- **Client contracts matter too.** If you work for a client, their contract may forbid AI
+  tools on their code, or allow only some of them.
+- **What's on your side:** your data goes only to Microsoft, under the agreement your
+  company already has, and only through your own account and licence. The proxy does not
+  share your seat or get around licence limits or quotas.
+
+Safest path: ask your IT or security team first and tell them exactly what it does (this
+section and [Data flow and privacy](#data-flow-and-privacy) are written for that). Use it
+for work only if they say yes. If you're unsure, use it only on your own code. The
+[MIT licence](LICENSE) gives no warranty: you use it at your own risk.
+
 ## How it works
 
 M365 Copilot uses a SignalR WebSocket protocol, not the OpenAI API. This project translates between the two:
