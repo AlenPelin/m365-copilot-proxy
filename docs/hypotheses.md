@@ -5640,3 +5640,38 @@ bursty. Falsifier: fresh-conversation retries failing at the same rate as same-c
 Cost to watch: each such retry starts a conversation, which is what the F13 thread-rate throttle
 counts. Bounded to one per dropped turn, but on a bad `InternalError` day it adds up; the same
 afternoon's benching (one conversation per run) did trip `PerUserThrottled`.
+
+## 39. Oct 28 2026 — GPT-6.1 Sol forgets the conversation's start after ~10 big delta turns
+
+**Hypothesis.** Under Claude Code, GPT-6.1 Sol (agent-less, non-premium) "forgot" its tools
+late in long sessions (turn 24: "no executable tool is available to me in this turn"). If the
+cause is M365's server-side conversation memory rather than input size, then the same amount of
+history should be recalled when sent in ONE request and lost when built up over delta turns.
+
+**Test.** `scripts/context-recall/recall-test.mjs`, through the proxy, no tools, 2026-10-28
+06:26–06:28Z, one non-premium account. A system rule ("end every reply with ZEBRA-17"), a fact at
+message 2 (codename), a fact mid-history (a port), filler = this repo's TypeScript source.
+- **A:** turn 1 = full history, ~32k tokens (proxy `mode=full`); turns 2–10 add ~25 KB each
+  (`mode=delta`, ~92k tokens in total); turns 11–12 ask for the facts and the rule.
+- **B:** the same facts in ~97k tokens of history, sent in a single request (own conversation:
+  the first run of B shared A's opener, so the proxy continued A's conversation — redone with a
+  different opener).
+
+| run | history | rule kept | codename | mid-history port |
+|---|---|---|---|---|
+| A turn 1 (full) | ~32k t | ✅ | ✅ | — |
+| A turns 2–9 (delta) | 39k → 85k t | ✅ | — | — |
+| A turn 10 (delta) | ~92k t | ❌ | — | — |
+| A turn 11 (delta) | ~92k t | ❌ | ❌ (made up `flux_v3` from the filler) | ❌ |
+| B (one request) | ~97k t | ✅ | ✅ | ✅ |
+
+**Conclusion (n=1 each, so 🟡).** Input size is not the limit at ~100k tokens (consistent with
+F9's ≥500k). What fails is recall of the conversation's start across turns: after ~10 turns of
+~25 KB (~85–90k tokens cumulative) the early messages — including the tool framing — are gone.
+The proxy depends on that memory, since follow-up turns send only new messages.
+
+**Proposed action.** Re-anchor: when the delta sent since the last full prompt passes a threshold
+(e.g. ~60k tokens), start a fresh M365 conversation and resend the full history (the B shape).
+Cost: one new conversation per re-anchor (F13's thread-rate throttle counts those).
+**Falsifier:** run A again with the threshold on; recall should hold at turn 11+. Also untested:
+whether the turn count or the token total is what triggers the loss (A grew both together).
