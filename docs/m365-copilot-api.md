@@ -69,7 +69,7 @@ wss://substrate.office.com/m365Copilot/Chathub/{oid}@{tid}?{query}
 ### Flow: MSAL PKCE
 We use `@azure/msal-node` `PublicClientApplication` with PKCE. The token cache is persisted to `~/.config/opencode-m365/msal-cache.json` and refreshed silently when possible.
 
-> **The cache is disposable (tested June 2026, `scripts/token-regen-probe.mjs`).** Delete `msal-cache.json` and the next `getToken()` self-heals: silent fails → automated browser login (stored creds + TOTP) → a fresh, working token in **~12s**, no human in the loop. The regenerated token is **functionally identical** — same `aud`/`appid`/`tid`/`oid`/scopes, only `iat`/`exp`/`uti` change. Point auth at a throwaway cache with `M365_CACHE_FILE` to test this without touching the real one.
+> **The cache is disposable (tested June 2026, `scripts/token-regen-probe.mjs`).** Delete `msal-cache.json` and the next `getToken()` gets a new one. At the time that was silent fails → automated browser login (stored creds + TOTP) → a fresh, working token in **~12s**, no human in the loop. Since 2026-10-28 the fallback is the interactive sign-in window, so a human signs in again. The regenerated token is **functionally identical** — same `aud`/`appid`/`tid`/`oid`/scopes, only `iat`/`exp`/`uti` change. Point auth at a throwaway cache with `M365_CACHE_FILE` to test this without touching the real one.
 >
 > **Re-auth does NOT clear account throttling** — the fresh token carries the same `oid`, so it lands in the same account-keyed throttle bucket. Throttling is identity-level, not token-level.
 >
@@ -82,6 +82,8 @@ The `nativeclient` redirect URI is designed to be **intercepted by an embedded n
 - **Fix:** attach a `page.on("request")` listener and pull `code` out of the *navigation request* to `…/oauth2/nativeclient?code=…`. See `runBrowserLogin()` in `auth.ts`.
 
 ### Automated login quirks (Playwright)
+
+> **History.** The proxy no longer has an automated login (removed 2026-10-28; sign-in is interactive only). The quirks below describe the old stored-credentials path and still apply to the research scripts that drive the form themselves.
 - The converged AAD login page keeps **hidden duplicate `<input type=password>` nodes**; a naive `fill()` can target a stale hidden one and submit an empty password. Fill the **visible** `name=`-selected field and verify the value landed (`fillVerified()`).
 - Field selectors: email `input[name="loginfmt"]`, password `input[name="passwd"]`, TOTP `input[name="otc"]`.
 - On NixOS, Playwright's bundled `chrome-headless-shell` fails (`libglib-2.0.so.0`); point it at a system Chromium via `CHROMIUM_PATH` (`resolveChromiumPath()`).

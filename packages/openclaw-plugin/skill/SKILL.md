@@ -37,9 +37,7 @@ m365-openclaw-setup --start 8080
 
 ## Authentication
 
-Auth credentials are stored in `~/.config/opencode-m365/secrets.json`:
-- `email`: Your M365 email address
-- `password`: Your M365 password
-- `mfaSecret`: Your TOTP MFA secret (base32)
-
-The proxy handles token refresh automatically using MSAL with PKCE.
+Sign-in is interactive only: on first use a browser window opens and you sign in
+there yourself (any MFA). The proxy never stores a password or MFA secret. After
+that it refreshes tokens silently from `~/.config/opencode-m365/msal-cache.json`
+(MSAL with PKCE).

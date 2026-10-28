@@ -1,9 +1,10 @@
 # NixOS module for m365-copilot-proxy.
 #
-# Runs the Nitro proxy as a hardened systemd service. Credentials are delivered
-# via systemd LoadCredential (never copied into the world-readable Nix store) and
-# symlinked to where the app reads them ($HOME/.config/opencode-m365/secrets.json).
-# msal-cache.json + agent-id.json persist in the StateDirectory across restarts.
+# Runs the Nitro proxy as a hardened systemd service. Sign-in is interactive only,
+# and a service has no display, so sign in once on a desktop machine and copy its
+# msal-cache.json to /var/lib/m365-copilot-proxy/.config/opencode-m365/ (owned by the
+# service). Tokens then refresh silently; msal-cache.json + agent-id.json persist in
+# the StateDirectory across restarts.
 #
 # Imported from the flake as `import ./nix/module.nix self`, where `self` supplies
 # the default package for the host's system.
@@ -22,18 +23,6 @@ in
       default = self.packages.${pkgs.system}.m365-copilot-proxy;
       defaultText = lib.literalExpression "m365-copilot-proxy.packages.\${system}.m365-copilot-proxy";
       description = "The proxy package to run (the wrapper that sets CHROMIUM_PATH and execs the Nitro server).";
-    };
-
-    secretsFile = lib.mkOption {
-      type = lib.types.path;
-      example = "/run/secrets/m365-copilot.json";
-      description = ''
-        Path to a JSON file with M365 credentials:
-        `{ "email": "...", "password": "...", "mfaSecret": "..." }`.
-
-        Delivered to the service via systemd LoadCredential, so it is never placed
-        in the Nix store. Manage it with sops-nix, agenix, or any out-of-band method.
-      '';
     };
 
     port = lib.mkOption {
@@ -61,7 +50,7 @@ in
       type = lib.types.package;
       default = pkgs.chromium;
       defaultText = lib.literalExpression "pkgs.chromium";
-      description = "Chromium used for the headless M365 login (CHROMIUM_PATH).";
+      description = "Chromium the proxy may launch (CHROMIUM_PATH). The service never opens a sign-in window (M365_NO_INTERACTIVE=1).";
     };
 
     environment = lib.mkOption {
@@ -95,8 +84,8 @@ in
         PORT = toString cfg.port;
         HOST = cfg.host;
         CHROMIUM_PATH = "${cfg.chromium}/bin/chromium";
-        # Headless automated login still runs; only the interactive (visible-browser)
-        # fallback is refused — so a bad/expired credential fails loudly instead of hanging.
+        # No display: never open the sign-in window. An expired cache fails loudly
+        # instead of hanging; re-copy msal-cache.json from a desktop sign-in.
         M365_NO_INTERACTIVE = "1";
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
       } // cfg.environment;
@@ -105,13 +94,8 @@ in
         ExecStartPre = pkgs.writeShellScript "m365-copilot-proxy-pre" ''
           set -eu
           mkdir -p "$HOME/.config/opencode-m365"
-          # Point the app at the LoadCredential-provided secrets file via symlink,
-          # so the plaintext is never persisted into the state directory on disk.
-          ln -sf "$CREDENTIALS_DIRECTORY/secrets.json" "$HOME/.config/opencode-m365/secrets.json"
         '';
         ExecStart = "${cfg.package}/bin/m365-copilot-proxy";
-
-        LoadCredential = [ "secrets.json:${cfg.secretsFile}" ];
 
         DynamicUser = true;
         StateDirectory = "m365-copilot-proxy";

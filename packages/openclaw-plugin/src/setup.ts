@@ -27,7 +27,7 @@ async function main() {
     console.log("   Auth OK\n");
   } catch (err: any) {
     console.error(`   Auth failed: ${err.message}`);
-    console.error("   Set up credentials in ~/.config/opencode-m365/secrets.json first.");
+    console.error("   Sign in once: run this on a machine with a display and complete sign-in in the browser window.");
     process.exit(1);
   }
 

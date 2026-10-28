@@ -83,7 +83,7 @@ describe("generateOpenClawConfig", () => {
 });
 
 // --- Integration tests against real M365 Copilot via proxy ---
-// Requires valid auth credentials in ~/.config/opencode-m365/secrets.json
+// Requires a signed-in MSAL cache (~/.config/opencode-m365/msal-cache.json)
 // Only 3 API calls to avoid rate limiting
 
 describe.skipIf(!process.env.M365_LIVE)("OpenClaw proxy integration (live)", () => {

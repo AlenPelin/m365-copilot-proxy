@@ -34,11 +34,10 @@ separate OpenAI or Anthropic bill.
 1. **Check you can use it.** You need a work or school (Entra ID) account with M365
    Copilot Chat, Node.js 24+ and pnpm 10+. Personal Microsoft accounts don't work.
 2. **Install:** `git clone`, `pnpm install`, `pnpm build` ([details](#1-install)).
-3. **Sign in.** Either put your email, password and TOTP secret in
-   `~/.config/opencode-m365/secrets.json` for headless sign-in, or set
-   `M365_ENABLE_INTERACTIVE_APPROVAL=1` and sign in once in a browser window
-   ([details](#2-configure-credentials)). After that, cached tokens are refreshed silently.
-4. **Start the proxy:** `pnpm run proxy`. It listens on `http://127.0.0.1:4141`.
+3. **Start the proxy and sign in:** `pnpm run proxy`. The first time, a browser window
+   opens and you sign in yourself, with your usual MFA. The proxy never stores your
+   password. After that, cached tokens are refreshed silently ([details](#2-sign-in)).
+4. The proxy listens on `http://127.0.0.1:4141`.
 5. **Start an agent** in another shell:
    - pi: `pnpm run pi` ([details](#3-use-with-pi-or-any-openai-compatible-agent))
    - Claude Code: `pnpm run claude`, or `.\scripts\claude-local.ps1` on Windows
@@ -81,8 +80,9 @@ What it does **not** do — read this before using it on client work:
 - **Your tenant admins can see some of it.** The proxy creates a Copilot Studio agent in
   your tenant's Power Platform environment. Sign-ins and Copilot use are logged by
   Microsoft for your organisation as usual.
-- **Secrets on disk are plain text.** `secrets.json` holds your password and TOTP secret
-  unencrypted. Keep it private, or use interactive sign-in instead.
+- **The token cache is a key to your account.** `msal-cache.json` holds a refresh token
+  (owner-only on Linux/macOS). Anyone who copies it can use Copilot as you until it
+  expires. No password or MFA secret is stored.
 - **The egress guard only covers programs that honour proxy settings.** Only an OS firewall
   rule stops a program that ignores them.
 - **Nothing stops you leaking data into this repo.** If you copy a real model reply into a
@@ -97,8 +97,8 @@ advice.
 - **There is no official API.** Microsoft does not offer M365 Copilot chat as an API for
   third-party tools. This proxy uses the private API behind Microsoft's own web client.
 - **It pretends to be Microsoft's client.** It signs in with Microsoft's own first-party
-  client ID, sends the same headers as the web page, and drives the login page in a hidden
-  browser in a way that avoids bot detection. Microsoft's terms generally don't allow
+  client ID, sends the same headers as the web page, and opens the sign-in page in
+  a browser set up to hide that it is automated. Microsoft's terms generally don't allow
   accessing services by automated or unapproved means. Microsoft could block it at any
   time, and could act against the account.
 - **Your company's policy comes first.** M365 is licensed to your employer, not to you.
@@ -177,14 +177,10 @@ Each agent session reuses the same M365 conversation (same `sessionId` + `conver
   client it signs in as rejects personal accounts ("You can't sign in here with a
   personal account", #64). "Every account" elsewhere in this README means every work
   or school account, premium or not.
-- A way to sign in, either:
-  - **TOTP-based MFA with the base32 secret in hand** — the automated login types the
-    6-digit code itself, so it needs the seed, not an app on your phone. See
-    [Getting the TOTP secret](#getting-the-totp-secret). This is the headless-friendly
-    option; prefer it if your tenant allows it.
-  - **or a display and 30 seconds** — set `M365_ENABLE_INTERACTIVE_APPROVAL=1` and sign
-    in by hand once. Required if your tenant has [no TOTP option](#if-your-tenant-has-no-totp-option)
-    (push-only MFA, FIDO2, Okta/Ping/Duo).
+- **A display, once.** Sign-in is interactive only: a browser window opens and you sign
+  in yourself, with whatever MFA your tenant enforces. After that tokens refresh
+  silently. A headless host (systemd, CI) needs a cache copied from a machine where you
+  signed in (see [Sign in](#2-sign-in)).
 
 ### 1. Install
 
@@ -195,85 +191,43 @@ pnpm install
 pnpm build
 ```
 
-### 2. Configure credentials
+### 2. Sign in
 
-Create `~/.config/opencode-m365/secrets.json`:
-
-```json
-{
-  "email": "you@company.com",
-  "password": "your-password",
-  "mfaSecret": "YOUR_TOTP_BASE32_SECRET"
-}
-```
-
-`mfaSecret` is the **base32 seed** your authenticator app derives its 6-digit codes
-from — not a code itself. It looks like `JBSWY3DPEHPK3PXP`: 16–32 characters, `A`–`Z`
-and `2`–`7` only, no spaces.
-
-#### Getting the TOTP secret
-
-**Already using a password manager for TOTP? Just read it back out.** 1Password,
-Bitwarden, KeePassXC, Aegis, Ente Auth and friends all keep the seed and will show it
-on demand — open the item's one-time-password field and reveal it. You'll get either a
-bare base32 string or an `otpauth://totp/...?secret=JBSWY3DPEHPK3PXP&...` URI; in the
-second case the `secret=` parameter is the bit you want. No re-enrollment needed.
-
-**If the seed is trapped in Microsoft Authenticator, enroll a second method.** That app
-deliberately never exposes it, and Microsoft's security-info page won't re-display the
-key after enrollment either — between them that's the only case where the seed is
-genuinely unrecoverable. Enroll a fresh entry and copy it on the way past:
-
-1. Go to <https://aka.ms/mfasetup> (**My Account → Security info**).
-2. **Add sign-in method → Authenticator app**.
-3. Click **"I want to use a different authenticator app"**. This step is the one that
-   matters — the default path assumes Microsoft Authenticator and registers a
-   push-only method with no seed you can extract.
-4. At the QR-code screen, click **"Can't scan image?"**. It reveals a **Secret key** —
-   that's your base32 string.
-5. Generate a code from it to finish enrollment — `oathtool --totp -b <secret>`, or
-   paste the seed into your password manager — and enter that code.
-
-Store it somewhere that will give it back (see above) so this is a one-time chore. The
-new entry sits alongside your existing sign-in methods; you don't have to remove
-Microsoft Authenticator.
-
-#### If your tenant has no TOTP option
-
-Plenty of tenants can't do the above, and then there is no seed to extract:
-
-- the authenticator-app / software-OATH method is disabled by tenant policy;
-- MFA is push / number-matching only, FIDO2, Windows Hello, or certificate-based;
-- sign-in is federated to a third-party IdP (Okta, Ping, Duo) that owns the MFA step.
-
-The stored-credentials flow above cannot work in those cases — the automated login has
-no code to type, and no amount of configuration fixes that.
-
-**Use interactive approval instead.** Skip `secrets.json` entirely and set:
+Sign-in is **interactive only**. There is no config file: the proxy never stores your
+password or an MFA secret. Start the proxy on a machine with a display:
 
 ```sh
-export M365_ENABLE_INTERACTIVE_APPROVAL=1
-m365-proxy 4141
+pnpm run proxy
 ```
 
-A real browser window opens; you complete SSO/MFA by hand exactly as you would in
-Outlook — push, FIDO2, Okta, whatever your tenant enforces. The proxy captures the
-resulting OAuth code and from then on refreshes tokens silently from the MSAL cache,
-so the window is a **one-time cost**, not a per-run prompt. The console shows
-`[m365 auth] Waiting up to 600s.` while you sign in, then
-`[m365 auth] Signed in as <you> — token saved, browser closing.` and, once the server is
-up, `Listening on http://127.0.0.1:4141`. It also kicks in when
-stored credentials exist but stop working (policy change, MFA method swap).
+On first start (or when the cached refresh token has expired) a real browser window
+opens. Complete SSO/MFA by hand exactly as you would in Outlook — TOTP, push, FIDO2,
+Windows Hello, Okta/Ping/Duo, whatever your tenant enforces. The proxy captures the
+resulting OAuth code and from then on refreshes tokens silently from
+`~/.config/opencode-m365/msal-cache.json`, so the window is a **one-time cost**, not a
+per-run prompt. The console shows `[m365 auth] Waiting up to 600s.` while you sign in,
+then `[m365 auth] Signed in as <you> — token saved, browser closing.` and, once the
+server is up, `Listening on http://127.0.0.1:4141`. `M365_INTERACTIVE_TIMEOUT_MS`
+changes the 600 s wait.
 
-Contributed by [@EatonWu](https://github.com/EatonWu). Two honest caveats:
+**Headless hosts** (systemd, CI, a server): set `M365_NO_INTERACTIVE=1` so a missing or
+expired token fails loudly instead of waiting on a window nobody can see. Sign in once
+on a desktop machine, then copy its `msal-cache.json` to the host's
+`~/.config/opencode-m365/` (or point `M365_CACHE_FILE` at it). Treat that file like a
+password: it holds a refresh token for your account.
 
-- It is **opt-in on purpose.** Without the flag a headless host (systemd, CI, a second
-  PC) fails loudly instead of hanging on a window nobody can see. Set
-  `M365_NO_INTERACTIVE=1` to veto it outright.
-- The redirect capture and token exchange are the same ones the automated path uses in
-  production, but **nobody has yet run this end to end against a federated Okta/Ping/Duo
-  tenant.** If that's you, please report in
-  [#4](https://github.com/cramt/m365-copilot-proxy/issues/4) — working or not.
+**Old `secrets.json`:** the stored-credentials login (email + password + TOTP secret,
+typed into a headless browser) was removed on 2026-10-28. If
+`~/.config/opencode-m365/secrets.json` (or `M365_SECRETS_FILE`) still exists, the proxy
+ignores it and prints a one-line warning to delete it, because it holds your password
+in plain text. `M365_ENABLE_INTERACTIVE_APPROVAL` is no longer needed; it is ignored.
+Research scripts under `scripts/` that imported `loadSecrets`/`loginAutomated` from
+core no longer run.
+
+The interactive path was contributed by [@EatonWu](https://github.com/EatonWu). Nobody
+has yet run it end to end against a federated Okta/Ping/Duo tenant. If that's you,
+please report in [#4](https://github.com/cramt/m365-copilot-proxy/issues/4) — working
+or not.
 
 > **Not device code.** The obvious headless alternative — `login.microsoft.com/device`
 > with a short code — is permanently dead here, not merely unimplemented. Initiation
@@ -281,10 +235,6 @@ Contributed by [@EatonWu](https://github.com/EatonWu). Two honest caveats:
 > Microsoft's own Copilot client as confidential for that grant and demands a
 > `client_secret` only Microsoft holds. No tenant admin can grant it. Measured, with the
 > sign-in actually completed, in [§13 H13.2](docs/hypotheses.md).
-
-#### First run
-
-On first run, the system does an automated browser login (via Playwright/Chromium) to get OAuth tokens. After that, tokens refresh silently from the MSAL cache.
 
 ### 3. Use with pi (or any OpenAI-compatible agent)
 
@@ -559,9 +509,6 @@ module:
         {
           services.m365-copilot-proxy = {
             enable = true;
-            # JSON with { email, password, mfaSecret } — kept out of the Nix store,
-            # delivered via systemd LoadCredential. Manage with sops-nix/agenix.
-            secretsFile = "/run/secrets/m365-copilot.json";
             # port = 4141;          # default
             # host = "127.0.0.1";   # default — do not expose; unauthenticated, paid account
             # openFirewall = false;
@@ -574,8 +521,12 @@ module:
 ```
 
 The service runs as a hardened `DynamicUser` unit. Auth state (`msal-cache.json`,
-`agent-id.json`) persists in `/var/lib/m365-copilot-proxy`; a fresh deploy self-bootstraps
-via headless login using `secretsFile` + the bundled Chromium. To run the package directly
+`agent-id.json`) persists in `/var/lib/m365-copilot-proxy`. Sign-in is interactive only
+and the service has no display (it sets `M365_NO_INTERACTIVE=1`), so a fresh deploy needs a
+token cache: sign in once on a desktop machine and copy its `msal-cache.json` to
+`/var/lib/m365-copilot-proxy/.config/opencode-m365/`, owned by the service. Tokens then
+refresh silently; when the refresh token finally expires, the service fails loudly and you
+copy a fresh cache. The `secretsFile` option was removed. To run the package directly
 without NixOS: `nix run github:cramt/m365-copilot-proxy -- 4141`.
 
 ## Available models
@@ -862,7 +813,7 @@ dependencies, and a live Claude Code run with all other traffic logged and block
 
 | Destination | What is sent | Code |
 |---|---|---|
-| `login.microsoftonline.com` | Sign-in (MSAL, Microsoft's own first-party client ID `c0ab8ce9-…`); the automated login also types email/password/TOTP code into this page in a local headless Chromium | `core/src/auth.ts` |
+| `login.microsoftonline.com` | Sign-in (MSAL, Microsoft's own first-party client ID `c0ab8ce9-…`), in a visible Chromium window where you type your own credentials; the proxy never sees your password | `core/src/auth.ts` |
 | `wss://substrate.office.com/m365Copilot/Chathub/…` | The chat: the whole prompt — system prompt, messages, tool definitions and tool results (so file contents, command output, paths your agent reads) | `core/src/session.ts` |
 | `substrate.office.com/m365Copilot/UploadFile` | Images in the conversation (base64 only) | `core/src/image-input.ts` |
 | `api.bap.microsoft.com`, `*.environment.api.powerplatform.com` | Create/update the Copilot Studio agent (its instructions) in **your tenant's** default Power Platform environment — visible to your tenant admins | `core/src/agent.ts` |
@@ -876,8 +827,7 @@ and tools reach M365. Proxy chats use M365 temporary-chat mode, so they don't ap
 your Copilot history (unless `M365_SAVE_HISTORY=1`).
 
 **Local files** under `~/.config/opencode-m365/`: `msal-cache.json` (tokens, written
-owner-only `0600` on Linux/macOS), `secrets.json` (your email, password and TOTP secret in
-plain text, if you use automated login), `agent-id.json`, `browser-profile/` (login
+owner-only `0600` on Linux/macOS), `agent-id.json`, `browser-profile/` (login
 cookies), `login-debug/` (screenshots + HTML of a failed login). Debug logs and frame dumps
 (prompts and replies) are written only with `M365_DEBUG`/`M365_TRACE`/`M365_DUMP_FRAMES`.
 
@@ -903,13 +853,12 @@ The auth flow uses Azure MSAL with PKCE:
 
 1. **Silent refresh** — cached tokens from `~/.config/opencode-m365/msal-cache.json`. The
    normal path; costs nothing and opens nothing.
-2. **Automated login** — headless Playwright browser driving the AAD form with stored
-   credentials + a TOTP code generated from `mfaSecret`.
-3. **Interactive approval** — visible browser, human completes SSO/MFA (§13). Only when
-   `M365_ENABLE_INTERACTIVE_APPROVAL=1`, and only after step 2 is unavailable or has
-   actually failed. This is the path for tenants where no TOTP seed exists.
+2. **Interactive sign-in** — the only login: a visible Playwright browser where you
+   complete SSO/MFA yourself (§13), using the persistent `browser-profile/`. Refused with
+   `M365_NO_INTERACTIVE=1` (headless hosts), which makes a missing token an error.
 
-All three redeem the code against `https://login.microsoftonline.com/common/oauth2/nativeclient`
+There is no stored-credentials login (removed 2026-10-28; see [Sign in](#2-sign-in)).
+Both redeem the code against `https://login.microsoftonline.com/common/oauth2/nativeclient`
 with PKCE. That redirect isn't a stylistic choice: the client is Microsoft's own Copilot app
 (the Sydney scopes are granted to no other), so nobody can register a loopback URI — a
 generated `http://localhost:<port>` callback is rejected with `AADSTS50011`, and the device-code
@@ -941,11 +890,10 @@ Three token scopes are acquired:
 | `M365_AVOID_THROTTLING` | Set to `1` to keep the account clear of M365's `PerUserThrottled` throttle. A long pi session or a bench sweep trips it by running the account's turn budget dry (~100 turns, refilled at ~1.6 a minute, [hypotheses §24 F58](docs/hypotheses.md)), and it then refuses every turn for about an hour. With this set, the proxy waits before each upstream turn until the budget holds that turn plus a reserve of 20. A streamed request waits on its keepalive chunks, so pi doesn't time out, and the session runs at ~1.6 turns a minute once the budget is low. After a throttled turn the proxy holds new turns for 75 minutes and answers them with a 429 (`m365_throttle_hold`, with `Retry-After`) instead of sending them: each one would keep the throttle alive. The budget is read from the debug logs under `~/.config/opencode-m365`, so with `M365_DEBUG=1` it also counts the bench's and other proxies' turns and survives a restart. Without it, only this process's turns since it started count. The bench uses the same variable ([scripts/bench/README.md](scripts/bench/README.md)). Off by default. [Hypotheses §37](docs/hypotheses.md). |
 | `M365_BUDGET_MAX_WAIT_MIN` | The longest `M365_AVOID_THROTTLING` holds a streamed request (default `15`, enough to refill an empty budget). A longer wait, usually a throttle hold, gets the 429 instead. A request that isn't streamed waits at most 2 minutes, since it sends nothing until the answer and clients give up on it after 5. Both limits count the time a request spends behind others waiting their turn. A larger value (e.g. `90`) lets a streamed request sit out a throttle hold instead of failing: pi has no time limit on a stream that keeps sending data. |
 | `M365_BUDGET_CAPACITY` / `M365_BUDGET_REFILL` / `M365_BUDGET_RESERVE` / `M365_BUDGET_HOLD_MIN` / `M365_BUDGET_LOGS` | Tune `M365_AVOID_THROTTLING`'s budget model: its size (default `100` turns), refill rate (`1.6` a minute), the reserve kept back (`20`), the hold after a throttled turn (`75` minutes), and more log files or directories to read (`:`-separated). |
-| `M365_BROWSER_PROFILE` / `M365_LOGIN_UA` | Override the persistent browser-profile dir and the login User-Agent used for the (rare) automated interactive login. The persistent profile keeps AAD SSO/device cookies so repeat logins are silent and look like a familiar device ([§11 H-R3](docs/hypotheses.md)). |
-| `M365_ENABLE_INTERACTIVE_APPROVAL` | Set to `1` to allow a **visible** browser window for sign-in when the automated login can't work or fails — the fallback for tenants with no TOTP option (push-only MFA, FIDO2, Okta/Ping/Duo). You complete SSO/MFA by hand once; tokens refresh silently afterwards. Off by default so headless hosts fail loudly rather than hang. See [If your tenant has no TOTP option](#if-your-tenant-has-no-totp-option). |
-| `M365_NO_INTERACTIVE` | Set to `1` to hard-disable any visible browser login, overriding the flag above. For systemd/CI hosts where a window must never open. |
+| `M365_BROWSER_PROFILE` / `M365_LOGIN_UA` | Override the persistent browser-profile dir and the User-Agent of the sign-in window. The persistent profile keeps AAD SSO/device cookies so repeat logins are silent and look like a familiar device ([§11 H-R3](docs/hypotheses.md)). |
+| `M365_NO_INTERACTIVE` | Set to `1` to never open the sign-in window. For systemd/CI hosts: a missing or expired token is then an error. Copy `msal-cache.json` from a desktop sign-in instead. |
 | `M365_INTERACTIVE_TIMEOUT_MS` | How long to wait for you to finish the interactive sign-in (default `600000`, i.e. 10 minutes). |
-| `M365_LOGIN_LOCALE` / `M365_LOGIN_TIMEZONE` | Browser locale and timezone presented during login (defaults `en-GB` / `Europe/Copenhagen`). These are part of the anti-bot-scoring fingerprint ([§11 F25](docs/hypotheses.md)) — set them to match your own machine if AAD starts treating your automated login as a bot. |
+| `M365_LOGIN_LOCALE` / `M365_LOGIN_TIMEZONE` | Browser locale and timezone presented during login (defaults `en-GB` / `Europe/Copenhagen`). These are part of the anti-bot-scoring fingerprint ([§11 F25](docs/hypotheses.md)) — set them to match your own machine if AAD starts treating the sign-in window as a bot. |
 | `M365_FORCE_AGENT` | **The `m365-proxy` launcher (`pnpm run proxy`) sets it to `0` when unset**, so no agent is created or used by default: basic accounts get a 403 publishing it, and every attempt touches bots in the tenant. Set `1` or `auto` to change that (`auto`, or any other value, gives the per-model choice described next). Override which tool requests carry the Copilot Studio tool agent. `1` attaches it to every tool request (and turns off the GPT-6 Sol fallback below); `0` never attaches it. Unset, the proxy decides per model: GPT-5.x, `m365-copilot` and both Opus models take it, the other Claude models and `gpt-6-think-deeper` don't, and `gpt-6-sol` / `gpt-6.1-sol` take it only on a premium account, which the proxy learns from the first request. On a non-premium account `0` saves the probe turn (~3 s) per GPT-6 Sol model per proxy start. |
 | `M365_OPUS_FALLBACK_MODEL` | Model to serve `claude-opus` (Opus 5.5) requests with once its priority-access budget is used up, instead of returning a 429 — typically `claude-opus-4.8`, which isn't metered (premium accounts only). Applies until the budget resets; the response's `model` field names the model that answered. Unset by default. |
 | `M365_SONNET_FALLBACK_MODEL` | The same for `claude-sonnet-5.5` (Sonnet 5.5) once its priority-access budget is used up — e.g. `claude-sonnet-5` (unmetered) or `claude-sonnet` (Sonnet 4.6, any account). A fallback naming a metered model is ignored. Unset by default. |
@@ -954,8 +902,8 @@ Three token scopes are acquired:
 | `M365_PROXY_API_KEY` | Require this key on every `/v1/*` route except `GET /v1/models`, as `Authorization: Bearer <key>` or `x-api-key: <key>` (constant-time compare; else 401). Unset (default): no check. |
 | `M365_CLAUDE_CODE_MODEL` | Proxy model for `/v1/messages` requests that name a model the proxy doesn't know (Claude Code's own model names). Default: the chat default, `gpt-5.5-think-deeper`. |
 | `M365_CACHE_FILE` | Override MSAL token cache location |
-| `M365_SECRETS_FILE` | Override credentials file location |
-| `CHROMIUM_PATH` | Path to Chromium binary for automated login |
+| `M365_SECRETS_FILE` | Only used to find a leftover `secrets.json` and warn you to delete it |
+| `CHROMIUM_PATH` | Path to the Chromium binary for the sign-in window |
 
 ### Usage / context-window % in responses
 
@@ -1001,7 +949,6 @@ All stored in `~/.config/opencode-m365/`:
 
 | File | Description |
 |---|---|
-| `secrets.json` | Login credentials (email, password, mfaSecret) |
 | `msal-cache.json` | MSAL token cache (auto-managed) |
 | `agent-id.json` | Cached Copilot Studio agent ID |
 | `debug.log` | Debug log (when `M365_DEBUG=1`; renamed by `M365_LOG_FILE`) |

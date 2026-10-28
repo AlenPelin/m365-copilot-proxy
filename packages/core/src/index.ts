@@ -3,8 +3,6 @@ export {
   getTokenSilent,
   getTokenForScope,
   getImageArtifactToken,
-  loginAutomated,
-  loadSecrets,
   forceReauth,
 } from "./auth.js";
 
