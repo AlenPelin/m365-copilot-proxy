@@ -13,7 +13,7 @@ This project is a small local server (the **proxy**) that sits in between:
 
 ```
 coding agent  ──HTTP──▶  proxy on 127.0.0.1:4141  ──WebSocket──▶  M365 Copilot (Microsoft)
-(pi / Claude Code)       translates both ways                      signed in as you
+(Claude Code)       translates both ways                      signed in as you
 ```
 
 - It signs in to M365 Copilot as you, the same way the Copilot web page does.
@@ -35,12 +35,11 @@ separate OpenAI or Anthropic bill.
    password. After that, cached tokens are refreshed silently ([details](#2-sign-in)).
 4. The proxy listens on `http://127.0.0.1:4141`.
 5. **Start an agent** in another shell:
-   - pi: `pnpm run pi` ([details](#3-use-with-pi-or-any-openai-compatible-agent))
-   - Claude Code: `pnpm run claude`, or `.\scripts\claude-local.ps1` on Windows
+   - Claude Code: `copilot`, or `.\scripts\claude-local.ps1` on Windows
      ([details](#4-use-with-claude-code))
    - anything else OpenAI-compatible: base URL `http://127.0.0.1:4141/v1`, any API key
      ([details](#6-use-as-standalone-proxy))
-6. **Pick a model** with `MODEL=…` (see [Available models](#available-models)). What you
+6. **Pick a model** with `$env:MODEL = "gpt-6.1-sol"` (see [Available models](#available-models)). What you
    can use depends on your Copilot licence: some models need a premium seat, and some have
    daily or weekly quotas.
 
@@ -148,6 +147,14 @@ it scored 0/5 on real agentic tasks; see [hypotheses §9](docs/hypotheses.md)):
   ```` ```bash ls``` ````), the handler sends one follow-up in the same conversation naming the
   problem and asking to resend it as one block, or to reply without it. The forcing (confab)
   retry is skipped after that re-ask. Costs one upstream turn. `M365_NO_FENCE_RETRY=1` turns it off.
+- **Give-up phrasings** (`CONFABULATION_PATTERNS` in `core/src/tools.ts`, read by
+  `looksLikeConfabulation`): a tool turn with no call whose text matches one of these gets the
+  forcing retry (see `M365_NO_CONFAB_RETRY`). Besides "can't access / run / read …", "don't have
+  access", "paste the contents", the `/mnt/data` sandbox tells and the Turkish forms, it catches
+  first-person "I can't / I'm unable to / I'm not able to **generate, produce, export, create or
+  make** files, documents or PDFs" and "I can't … **in the current session / this chat / this
+  conversation**" (upstream PR #78). Both need the "I": a finished answer about what a program
+  can't do ("the exporter can't generate PDFs without wkhtmltopdf") is not a give-up.
 - **Shell-routing (the key lever):** M365's chat-tuned model won't "act as an agent" on
   demand but *will* reflexively write a ```` ```bash ```` block. When the toolset includes a
   shell tool (`bash`/`shell`/`run`/`run_command`/… — any name), the proxy injects "do the
