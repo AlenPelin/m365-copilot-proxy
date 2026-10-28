@@ -273,6 +273,14 @@ conversation with a turn still running is never dropped: before, a turn longer t
 (throttle waits, a long tool turn) left its conversation stale the moment it ended, so the next
 tool result opened a new thread (idea from retsimx 1d859d4, d84c9a7).
 
+Only a conversation's first turn goes out with `isStartOfSession: true`; the handler sends the
+full prompt when the session's turn count is 0 and only the new messages after that. When a turn
+can't connect (WebSocket or handshake error, so M365 never got it), `ModelSession.run` reconnects
+with the same `sessionId` / `conversationId` and sends it once more. The new `CopilotSession`
+starts from the turn count the conversation had (`initialTurnCount`), so the resent turn is not
+marked as a new conversation's start, and the count doesn't drop to 0. If the turn that failed was
+the first, the resend is still the start (idea from Bertogim 48fbe71).
+
 ### Assembling a turn's text
 
 One M365 turn can hold several bot messages. `TurnTextComposer` (`core/src/session.ts`) keeps

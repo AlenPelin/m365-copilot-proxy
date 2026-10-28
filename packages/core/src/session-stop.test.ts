@@ -57,3 +57,26 @@ describe("CopilotSession — nothing is kept after the Stop frame", () => {
     expect(stream.fullText).toBe("```bash\nls\n```");
   });
 });
+
+describe("CopilotSession — initialTurnCount (a reconnect into a conversation M365 has)", () => {
+  async function sentStart(session: InstanceType<typeof CopilotSession>): Promise<boolean> {
+    const pending = session.chat(TOKEN, "hi", "m365-copilot");
+    await tick();
+    const ws = sockets.at(-1)!;
+    ws.recv({});
+    await pending;
+    ws.recv({ type: 3, invocationId: "0" });
+    const chat = ws.sent.find((s) => s.includes('"target":"chat"'))!;
+    return JSON.parse(chat.split("\x1E")[0]).arguments[0].isStartOfSession;
+  }
+
+  it("sends the first turn as the start of the conversation by default", async () => {
+    expect(await sentStart(new CopilotSession())).toBe(true);
+  });
+
+  it("doesn't when the conversation already has turns", async () => {
+    const session = new CopilotSession({ initialTurnCount: 3 });
+    expect(await sentStart(session)).toBe(false);
+    expect(session.turnCount).toBe(4);
+  });
+});

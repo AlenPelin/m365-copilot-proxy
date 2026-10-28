@@ -258,6 +258,9 @@ export interface CopilotSessionOptions {
   sessionId?: string;
   /** Reuse an existing conversation ID so M365 finds the same server-side conversation. */
   conversationId?: string;
+  /** Turns the conversation already has (a reconnect): the first chat() then
+   *  doesn't go out as isStartOfSession. Default 0, a new conversation. */
+  initialTurnCount?: number;
   /**
    * Ask M365 for a temporary chat by adding `disableMemory=1` to the Chathub URL.
    * Temporary chats retain context for their live ConversationId but are not
@@ -319,6 +322,7 @@ export class CopilotSession {
   constructor(options?: CopilotSessionOptions) {
     this.sessionId = options?.sessionId ?? crypto.randomUUID();
     this.conversationId = options?.conversationId ?? crypto.randomUUID();
+    this._turnCount = options?.initialTurnCount ?? 0;
     this.nativeActions = options?.nativeActions;
     this.temporaryChat = options?.temporaryChat ?? true;
     log.info(`New session: sid=${this.sessionId}, cid=${this.conversationId}, nativeActions=${!!this.nativeActions}, temporaryChat=${this.temporaryChat}`);

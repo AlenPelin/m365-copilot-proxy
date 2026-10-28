@@ -4,12 +4,19 @@ import { TurnBudgetHold } from "./turn-budget.js";
 // ModelSession.run's reconnect: when the first chat() fails it sends the turn
 // again on a fresh CopilotSession, and that turn waits on the budget like any
 // other (#77). The CopilotSession is faked: each chat() is one upstream turn.
-const wire = vi.hoisted(() => ({ events: [] as string[], failures: 0 }));
+// `starts` records, per chat(), whether it went out as the conversation's first
+// turn (isStartOfSession), as the real CopilotSession decides it.
+const wire = vi.hoisted(() => ({ events: [] as string[], failures: 0, starts: [] as boolean[] }));
 
 vi.mock("./session.js", () => ({
   CopilotSession: class {
     turnCount = 0;
+    constructor(options?: { initialTurnCount?: number }) {
+      this.turnCount = options?.initialTurnCount ?? 0;
+    }
     chat(token: string) {
+      wire.starts.push(this.turnCount === 0);
+      this.turnCount++;
       wire.events.push(`chat:${token}`);
       if (wire.failures > 0) {
         wire.failures--;
@@ -30,6 +37,7 @@ function session() {
 afterEach(() => {
   wire.events = [];
   wire.failures = 0;
+  wire.starts = [];
 });
 
 describe("ModelSession.run's reconnect", () => {
@@ -72,5 +80,37 @@ describe("ModelSession.run's reconnect", () => {
     } finally {
       if (saved !== undefined) process.env.M365_AVOID_THROTTLING = saved;
     }
+  });
+});
+
+// After a reconnect the turn count came from the fresh CopilotSession, so it fell
+// to 0: the reconnect's turn went out as isStartOfSession:true into a conversation
+// M365 already had (idea from Bertogim 48fbe71).
+describe("ModelSession.run's reconnect keeps the conversation's turn count", () => {
+  it("doesn't send the reconnect's turn as the start of the conversation", async () => {
+    const model = session();
+    await model.run("task", "claude-sonnet", undefined, []);
+    await model.run("result 1", "claude-sonnet", undefined, []);
+    wire.failures = 1;
+    await model.run("result 2", "claude-sonnet", undefined, []);
+    expect(wire.starts).toEqual([true, false, false, false]);
+    expect(model.turnCount).toBe(3);
+  });
+
+  it("sends it as the start when the first turn is the one that failed (it never reached M365)", async () => {
+    const model = session();
+    wire.failures = 1;
+    await model.run("task", "claude-sonnet", undefined, []);
+    expect(wire.starts).toEqual([true, true]);
+    expect(model.turnCount).toBe(1);
+  });
+
+  it("starts from 0 again in a new conversation", async () => {
+    const model = session();
+    await model.run("task", "claude-sonnet", undefined, []);
+    model.newConversation();
+    expect(model.turnCount).toBe(0);
+    await model.run("task", "claude-sonnet", undefined, []);
+    expect(wire.starts).toEqual([true, true]);
   });
 });

@@ -58,10 +58,11 @@ export class ModelSession {
     return this.copilotSession?.turnCount ?? 0;
   }
 
-  private createCopilotSession(): CopilotSession {
+  private createCopilotSession(initialTurnCount = 0): CopilotSession {
     return new CopilotSession({
       sessionId: this.sessionId,
       conversationId: this.conversationId,
+      initialTurnCount,
       temporaryChat: this.temporaryChat,
     });
   }
@@ -105,6 +106,12 @@ export class ModelSession {
     // Match the GUI: image gen is always available, so a plain "draw me an image"
     // produces one with no special mode (§14). Opt out with M365_NO_IMAGE_GEN.
     const turnOpts = { generateImages: !process.env.M365_NO_IMAGE_GEN, images: annotations };
+    // Turns M365 has in this conversation before this one. chat() rejects only
+    // before the turn is sent (connect or handshake error), so a reconnect resumes
+    // from here: the fresh CopilotSession would otherwise count from 0 and send
+    // the turn as isStartOfSession:true into the conversation M365 already has
+    // (idea from Bertogim 48fbe71).
+    const turnsBefore = this.copilotSession.turnCount;
 
     try {
       return await this.copilotSession.chat(token, text, model, signal, turnOpts);
@@ -116,7 +123,7 @@ export class ModelSession {
       // another request was let through for (#77). A token held through a long
       // wait may be near its end, so fetch it again.
       if ((await waitForBudget()).waitedMs > 0) token = await this.resolveToken();
-      this.copilotSession = this.createCopilotSession();
+      this.copilotSession = this.createCopilotSession(turnsBefore);
       return await this.copilotSession.chat(token, text, model, signal, turnOpts);
     }
   }
