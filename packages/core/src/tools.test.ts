@@ -455,6 +455,43 @@ describe("tool-result labelling", () => {
     );
     expect(out).toContain('<tool_response tool="tool">');
   });
+
+  // Upstream PR #70. GPT-5.6's CoT in a long pi session: "the tool is responding with
+  // an unexpected label" — an edit labelled command="todo.mjs", a command shown re-quoted.
+  it("labels a file tool by its path, not as a command", async () => {
+    const { formatToolResponse } = await import("./tools.js");
+    const history = [{ role: "assistant", tool_calls: [{ id: "e1", function: { name: "edit", arguments: '{"path":"todo.mjs","edits":[]}' } }] }];
+    const out = formatToolResponse({ role: "tool", tool_call_id: "e1", content: "Successfully replaced 1 block(s) in todo.mjs." }, history);
+    expect(out).toContain('<tool_response tool="edit" path="todo.mjs">');
+    expect(out).not.toContain("command=");
+  });
+
+  it("knows Claude Code's file_path (Read/Edit)", async () => {
+    const { formatToolResponse } = await import("./tools.js");
+    const history = [{ role: "assistant", tool_calls: [{ id: "r1", function: { name: "Read", arguments: '{"file_path":"/repo/src/a.ts","limit":20}' } }] }];
+    expect(formatToolResponse({ role: "tool", tool_call_id: "r1", content: "x" }, history)).toContain('<tool_response tool="Read" path="/repo/src/a.ts">');
+  });
+
+  it("shows a command with its own quotes (escaped), not swapped for single quotes", async () => {
+    const { formatToolResponse } = await import("./tools.js");
+    const cmd = `for f in a.mjs; do printf '%s\\n' "$f"; done`;
+    const history = [{ role: "assistant", tool_calls: [{ id: "b1", function: { name: "bash", arguments: JSON.stringify({ command: cmd }) } }] }];
+    const out = formatToolResponse({ role: "tool", tool_call_id: "b1", content: "a.mjs" }, history);
+    expect(out).toContain(`command="for f in a.mjs; do printf '%s\\\\n' \\"$f\\"; done"`);
+    expect(out).not.toContain("'$f'"); // "$f" and '$f' are different shell commands
+  });
+
+  // Live (GPT-5.6, relay_batch, a PDF task): a label cut silently at 100 chars,
+  // `command="… margin: 22m"`, was read as the command itself cut there.
+  it("marks a long command it shortens, so the label doesn't read as a cut command", async () => {
+    const { formatToolResponse } = await import("./tools.js");
+    const cmd = `set -eu\ncss=".notlar-pdf.css"\nprintf '%s\\n' '@page { size: A4; margin: 22mm 20mm; }' 'body { font-family: "Segoe UI", Arial }' > "$css"`;
+    const history = [{ role: "assistant", tool_calls: [{ id: "b2", function: { name: "bash", arguments: JSON.stringify({ command: cmd }) } }] }];
+    const label = formatToolResponse({ role: "tool", tool_call_id: "b2", content: "(no output)" }, history).split("\n")[0];
+    expect(label).toMatch(/…">$/);
+    const short = [{ role: "assistant", tool_calls: [{ id: "b3", function: { name: "bash", arguments: '{"command":"ls -la"}' } }] }];
+    expect(formatToolResponse({ role: "tool", tool_call_id: "b3", content: "x" }, short)).toContain('command="ls -la">');
+  });
 });
 
 describe("fenced tool format (the only format)", () => {

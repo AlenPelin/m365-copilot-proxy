@@ -130,6 +130,17 @@ it scored 0/5 on real agentic tasks; see [hypotheses §9](docs/hypotheses.md)):
   (scalar args as `key: value` header lines, one free-form body arg as the fence body,
   `old`/`new` edits as aider-style `SEARCH/REPLACE` diffs)
 - The proxy/handler parses that and converts it to OpenAI `tool_calls` format
+- **Tool results go back as `<tool_response>` blocks** (`formatToolResponse` in
+  `core/src/tools.ts`, used on the first turn and on every follow-up turn): the block names the
+  tool and the argument that identifies the call, found through the result's `tool_call_id`:
+  `<tool_response tool="bash" command="ls -la">`. The attribute is `command` for
+  `command`/`cmd`/`script`, `path` for `path`/`file_path` (Claude Code's Read/Edit)/`filePath`/
+  `file`/`filename`, `query` for `query`, otherwise `input` (the first string argument). Newlines
+  become spaces, `\` and `"` are escaped (not swapped for `'`: `"$f"` and `'$f'` are different
+  shell commands), and a value over 100 chars is cut and ends in `…`, so the model doesn't read
+  the label as its own command cut short. A result whose call can't be found is labelled
+  `tool="tool"` with no attribute (upstream PR #70: GPT-5.6 called a file edit labelled
+  `command="todo.mjs"` "an unexpected label", and gave up on a silently cut one).
 - **Fence shapes the parser reads** (`scanFences` in `core/src/fenced.ts`, CommonMark rules;
   upstream PR #71): backtick or `~~~` fences; 4+ backtick fences (the closer must be at least as
   long as the opener, and a same-length opener inside an open block nests); an indented fence
